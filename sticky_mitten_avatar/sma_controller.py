@@ -23,6 +23,7 @@ from sticky_mitten_avatar.static_object_info import StaticObjectInfo
 from sticky_mitten_avatar.frame_data import FrameData
 from sticky_mitten_avatar.task_status import TaskStatus
 
+import pickle
 
 class StickyMittenAvatarController(FloorplanController):
     """
@@ -170,7 +171,7 @@ class StickyMittenAvatarController(FloorplanController):
     _STOP_DRAG = 1000
 
     def __init__(self, port: int = 1071, launch_build: bool = True, demo: bool = False, id_pass: bool = True,
-                 screen_width: int = 256, screen_height: int = 256, debug: bool = False):
+                 screen_width: int = 256, screen_height: int = 256, debug: bool = False, train = True):
         """
         :param port: The port number.
         :param launch_build: If True, automatically launch the build.
@@ -183,6 +184,16 @@ class StickyMittenAvatarController(FloorplanController):
 
         self._debug = debug
         self._id_pass = id_pass
+        
+        if train:
+            self.data_path = resource_filename(__name__, "train_dataset.pkl")
+        else:
+            self.data_path = resource_filename(__name__, "test_dataset.pkl")
+        
+        with open(self.data_path, 'rb') as f:
+            self.dataset = pickle.load(f)
+        self.dataset_n = len(self.dataset)
+        self.dataset_id = 0
 
         self._container_shapes = loads(Path(resource_filename(__name__, "object_data/container_shapes.json")).
                                        read_text(encoding="utf-8"))
@@ -195,6 +206,7 @@ class StickyMittenAvatarController(FloorplanController):
         self.goal_positions: Optional[dict] = None
         # The IDs of each target object.
         self._target_object_ids: List[int] = list()
+        self.container_masses: Dict[int, float] = dict() 
 
         # Commands sent by avatars.
         self._avatar_commands: List[dict] = []
@@ -234,14 +246,15 @@ class StickyMittenAvatarController(FloorplanController):
         resp = self.communicate(commands)
 
         # Make sure that the build is the correct version.
-        if not launch_build:
+        '''if not launch_build:
             version = get_data(resp=resp, d_type=Version)
             build_version = version.get_tdw_version()
             python_version = PyPi.get_installed_tdw_version(truncate=True)
             if build_version != python_version:
                 print(f"Your installed version of tdw ({python_version}) doesn't match the version of the build "
                       f"{build_version}. This might cause errors!")
-
+        '''
+        
     def init_scene(self, scene: str = None, layout: int = None, room: int = -1) -> None:
         """
         Initialize a scene, populate it with objects, and add the avatar.
@@ -290,7 +303,15 @@ class StickyMittenAvatarController(FloorplanController):
         self.static_object_info: Dict[int, StaticObjectInfo] = dict()
         self.segmentation_color_to_id: Dict[int, int] = dict()
         self._cam_commands: Optional[list] = None
-
+        
+        #dataset
+        if self.dataset_id == self.dataset_n:
+            self.dataset_id = 0
+        self.data = self.dataset[self.dataset_id]
+        self.dataset_id += 1
+        scene = self.data['scene']['scene']
+        layout = self.data['scene']['layout']
+        room = self.data['scene']['room']
         # Initialize the scene.
         resp = self.communicate(self._get_scene_init_commands(scene=scene, layout=layout, room=room))
         self._avatar = Baby(debug=self._debug, resp=resp)
@@ -899,7 +920,23 @@ class StickyMittenAvatarController(FloorplanController):
         target = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * distance)
         return self.go_to(target=target, move_force=move_force, move_stopping_threshold=move_stopping_threshold,
                           stop_on_collision=stop_on_collision, turn=False, num_attempts=num_attempts)
-
+    
+    def put_in_container_for_model_training(self) -> TaskStatus: 
+        self._start_task() 
+        container_id: Optional[int] = None 
+        for arm in self.frame.held_objects: 
+            for o_id in self.frame.held_objects[arm]: 
+                if self.static_object_info[o_id].container: 
+                    container_id = o_id 
+        if container_id is None: 
+            return TaskStatus.not_a_container 
+        self.container_masses[container_id] += TARGET_OBJECT_MASS 
+        self._avatar_commands.append({"$type": "set_mass", 
+                                      "id": container_id, 
+                                      "mass": self.container_masses[container_id]}) 
+        self._end_task() 
+        return TaskStatus.success 
+    
     def put_in_container(self, object_id: int, container_id: int, arm: Arm) -> TaskStatus:
         """
         Try to put an object in a container.
@@ -1310,38 +1347,13 @@ class StickyMittenAvatarController(FloorplanController):
             ys_map = np.load(str(Y_MAP_DIRECTORY.joinpath(map_filename).resolve()))
             object_spawn_map = np.load(str(OBJECT_SPAWN_MAP_DIRECTORY.joinpath(map_filename).resolve()))
 
-            # Get all "placeable" positions in the room.
-            rooms: Dict[int, List[Tuple[int, int]]] = dict()
-            for i in range(0, np.amax(room_map)):
-                # Get all free positions in the room.
-                placeable_positions: List[Tuple[int, int]] = list()
-                for ix, iy in np.ndindex(room_map.shape):
-                    if room_map[ix][iy] == i:
-                        # If this is a spawnable position, add it.
-                        if object_spawn_map[ix][iy]:
-                            placeable_positions.append((ix, iy))
-                if len(placeable_positions) > 0:
-                    rooms[i] = placeable_positions
-
-            # Add 0-1 containers per room.
-            for room_key in list(rooms.keys()):
-                # Maybe don't add a container in this room.
-                if random.random() < 0.25:
-                    continue
-
-                proc_gen_positions = rooms[room_key][:]
-                random.shuffle(proc_gen_positions)
-                # Get a random position in the room.
-                ix, iy = random.choice(rooms[room_key])
-
-                # Get the (x, z) coordinates for this position.
-                # The y coordinate is in `ys_map`.
+            #add container
+            for c in self.data['container']:
+                ix, iy = c['ixy']
                 x, z = self.get_occupancy_position(ix, iy)
-                container_name = random.choice(StaticObjectInfo.CONTAINERS)
-                container_id, container_commands = self._add_object(position={"x": x, "y": ys_map[ix][iy], "z": z},
-                                                                    rotation={"x": 0,
-                                                                              "y": random.uniform(-179, 179),
-                                                                              "z": z},
+                container_name = c['name']
+                container_id, container_commands = self._add_object(position=c['position'],
+                                                                    rotation=c['rotation'],
                                                                     scale=CONTAINER_SCALE,
                                                                     audio=self._default_audio_values[
                                                                         container_name],
@@ -1351,45 +1363,28 @@ class StickyMittenAvatarController(FloorplanController):
                 commands.append({"$type": "set_mass",
                                  "id": container_id,
                                  "mass": CONTAINER_MASS})
+                self.container_masses[container_id] = CONTAINER_MASS
                 # Mark this space as occupied.
                 self.occupancy_map[ix][iy] = 0
-
-            # Pick a room to add target objects.
-            target_objects: Dict[str, float] = dict()
-            with open(str(TARGET_OBJECTS_PATH.resolve())) as csvfile:
-                reader = DictReader(csvfile)
-                for row in reader:
-                    target_objects[row["name"]] = float(row["scale"])
-            target_object_names = list(target_objects.keys())
-
-            # Load a list of visual materials for target objects.
-            target_object_materials = TARGET_OBJECT_MATERIALS_PATH.read_text(encoding="utf-8").split("\n")
-
-            # Get all positions in the room and shuffle the order.
-            target_room_positions = random.choice(list(rooms.values()))
-            random.shuffle(target_room_positions)
-            # Add the objects.
-            for i in range(random.randint(8, 12)):
-                ix, iy = random.choice(target_room_positions)
-                # Get the (x, z) coordinates for this position.
-                # The y coordinate is in `ys_map`.
+            
+            #add target objects
+            for o in self.data['target_object']:
+                ix, iy = o['ixy']
                 x, z = self.get_occupancy_position(ix, iy)
-                target_object_name = random.choice(target_object_names)
-                # Set custom object info for the target objects.
+                target_object_name = o['name']
                 audio = ObjectInfo(name=target_object_name, mass=TARGET_OBJECT_MASS, material=AudioMaterial.ceramic,
                                    resonance=0.6, amp=0.01, library="models_core.json", bounciness=0.5)
-                scale = target_objects[target_object_name]
-                object_id, object_commands = self._add_object(position={"x": x, "y": ys_map[ix][iy], "z": z},
-                                                              rotation={"x": 0, "y": random.uniform(-179, 179),
-                                                                        "z": z},
+                scale = o['scale']
+                object_id, object_commands = self._add_object(position=o['position'],
+                                                              rotation=o['rotation'],
                                                               scale={"x": scale, "y": scale, "z": scale},
                                                               audio=audio,
                                                               model_name=target_object_name)
                 self._target_object_ids.append(object_id)
                 commands.extend(object_commands)
-
+                
                 # Set a random visual material for each target object.
-                visual_material = random.choice(target_object_materials)
+                visual_material = o['visual_material']
                 substructure = AudioInitData.LIBRARIES["models_core.json"].get_record(target_object_name). \
                     substructure
                 commands.extend(TDWUtils.set_visual_material(substructure=substructure,
@@ -1399,20 +1394,20 @@ class StickyMittenAvatarController(FloorplanController):
 
                 # Mark this space as occupied.
                 self.occupancy_map[ix][iy] = 0
-
-            # Set the goal positions.
+            
+            #goal
+            # Set the goal positions and goal_object.
             goal_positions = loads(SURFACE_MAP_DIRECTORY.joinpath(f"{scene[0]}_{layout}.json").
                                    read_text(encoding="utf-8"))
             self.goal_positions = dict()
             for k in goal_positions:
                 self.goal_positions[int(k)] = goal_positions[k]
-
-            # Set the initial position of the avatar.
-            rooms = loads(SPAWN_POSITIONS_PATH.read_text())[scene[0]][str(layout)]
-            if room == -1:
-                room = random.randint(0, len(rooms) - 1)
-            assert 0 <= room < len(rooms), f"Invalid room: {room}"
-            avatar_position = rooms[room]
+                
+            self.goal_object = self.data['goal_object']
+            
+            #positon
+            avatar_position = self.data['avatar_position']
+            
 
         # Create the avatar.
         commands.extend(TDWUtils.create_avatar(avatar_type="A_StickyMitten_Baby", avatar_id="a"))
@@ -1442,6 +1437,7 @@ class StickyMittenAvatarController(FloorplanController):
                          {"$type": "teleport_avatar_to",
                           "avatar_id": "a",
                           "position": avatar_position}])
+        
         # Set all sides of both mittens to be sticky.
         for sub_mitten in ["palm", "back", "side"]:
             for is_left in [True, False]:
