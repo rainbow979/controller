@@ -313,6 +313,7 @@ class StickyMittenAvatarController(FloorplanController):
         scene = self.data['scene']['scene']
         layout = self.data['scene']['layout']
         room = self.data['scene']['room']
+        print('scene:', scene, layout, room, data_id)
         # Initialize the scene.
         resp = self.communicate(self._get_scene_init_commands(scene=scene, layout=layout, room=room))
         self._avatar = Baby(debug=self._debug, resp=resp)
