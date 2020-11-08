@@ -74,20 +74,14 @@ class Avatar(ABC):
     """
     High-level API for a sticky mitten avatar.
     Do not use this class directly; it is an abstract class. Use the `Baby` class instead (a subclass of `Avatar`).
-
     ***
-
     ## Fields
-
     - `id` The ID of the avatar.
     - `body_parts_static` Static body parts data. Key = the name of the part. See `BodyPartsStatic`
     - `frame` Dynamic info for the avatar on this frame, such as its position. See `tdw.output_data.AvatarStickyMitten`
     - `status` The current `TaskStatus` of the avatar.
-
     ***
-
     ## Functions
-
     """
 
     # A list of every joint in an avatar.
@@ -178,7 +172,6 @@ class Avatar(ABC):
         """
         :param target: The target position.
         :param arm: The arm that is bending to the target.
-
         :return: A `TaskResult` value describing whether the avatar can reach the target and, if not, why.
         """
 
@@ -223,13 +216,11 @@ class Avatar(ABC):
                          target_orientation: np.array = None, precision: float = 0.05) -> List[dict]:
         """
         Get an IK solution to move a mitten to a target position.
-
         :param arm: The arm (left or right).
         :param target: The target position for the mitten.
         :param target_orientation: Target IK orientation. Usually you should leave this as None (the default).
         :param stop_on_mitten_collision: If true, stop moving when the mitten collides with something.
         :param precision: The distance threshold to the target position.
-
         :return: A list of commands to begin bending the arm.
         """
 
@@ -275,15 +266,15 @@ class Avatar(ABC):
                               "avatar_id": self.id}])
         return commands
 
-    def grasp_object(self, object_id: int, target: np.array, arm: Arm, stop_on_mitten_collision: bool) -> List[dict]:
+    def grasp_object(self, object_id: int, target: np.array, arm: Arm, stop_on_mitten_collision: bool,
+                     precision: float = 0.05) -> List[dict]:
         """
         Begin to try to grasp an object with a mitten. Get an IK solution to a target position.
-
         :param object_id: The ID of the target object.
         :param target: Target position to for the IK solution.
         :param arm: The arm that will try to grasp the object.
         :param stop_on_mitten_collision: If true, stop moving when the mitten collides with something.
-
+        :param precision: The distance threshold to the target position.
         :return: A list of commands.
         """
 
@@ -298,7 +289,7 @@ class Avatar(ABC):
         target = self.get_rotated_target(target=target)
 
         commands = self.reach_for_target(arm=arm, target=target, target_orientation=target_orientation,
-                                         stop_on_mitten_collision=stop_on_mitten_collision)
+                                         stop_on_mitten_collision=stop_on_mitten_collision, precision=precision)
         self._ik_goals[arm].pick_up_id = object_id
         return commands
 
@@ -307,16 +298,13 @@ class Avatar(ABC):
         Update the avatar based on its current arm-bending goals and its state.
         If the avatar has achieved a goal (for example, picking up an object), it will stop moving that arm.
         Update the avatar's state as needed.
-
         :param resp: The response from the build.
-
         :return: A list of commands to pick up, stop moving, etc.
         """
 
         def _get_mitten_position(a: Arm) -> np.array:
             """
             :param a: The arm.
-
             :return: The position of a mitten.
             """
 
@@ -517,13 +505,12 @@ class Avatar(ABC):
 
         return self._ik_goals[Arm.left] is None and self._ik_goals[Arm.right] is None
 
-    def drop(self, arm: Arm, reset: bool = True) -> List[dict]:
+    def drop(self, arm: Arm, reset: bool = True, precision: float = 0.1) -> List[dict]:
         """
         Drop all objects held by an arm.
-
         :param arm: The arm that will drop all held objects.
         :param reset: If True, reset the arm's positions to "neutral".
-
+        :param precision: The precision of the action.
         :return: A list of commands to put down the object.
         """
 
@@ -532,13 +519,13 @@ class Avatar(ABC):
                      "is_left": True if arm == Arm.left else False,
                      "avatar_id": self.id}]
         if reset:
-            commands.extend(self.reset_arm(arm=arm))
+            commands.extend(self.reset_arm(arm=arm, precision=precision))
         return commands
 
-    def reset_arm(self, arm: Arm) -> List[dict]:
+    def reset_arm(self, arm: Arm, precision: float = 0.1) -> List[dict]:
         """
         :param arm: The arm that will be reset.
-
+        :param precision: The precision of the action.
         :return: A list of commands to drop arms to their starting positions.
         """
 
@@ -556,13 +543,12 @@ class Avatar(ABC):
         for c in self._arms[arm].links[1:-1]:
             rotations[c.name] = 0
         # Set the IK goal.
-        self._ik_goals[arm] = _IKGoal(rotations=rotations, precision=0.1)
+        self._ik_goals[arm] = _IKGoal(rotations=rotations, precision=precision)
         return commands
 
     def is_holding(self, object_id: int) -> (bool, Arm):
         """
         :param object_id: The ID of the object.
-
         :return: True if the avatar is holding the object and, if so, the arm holding the object.
         """
 
@@ -575,7 +561,6 @@ class Avatar(ABC):
     def _stop_arm(self, arm: Arm) -> List[dict]:
         """
         :param arm: The arm to stop.
-
         :return: Commands to stop all the arm from moving.
         """
 
@@ -619,7 +604,6 @@ class Avatar(ABC):
     def _get_frame(self, resp: List[bytes]) -> AvatarStickyMitten:
         """
         :param resp: The response from the build.
-
         :return: AvatarStickyMitten output data for this avatar on this frame.
         """
         for i in range(len(resp) - 1):
@@ -633,9 +617,7 @@ class Avatar(ABC):
     def get_rotated_target(self, target: np.array) -> np.array:
         """
         Rotate the target by the avatar's forward directional vector.
-
         :param target: The target position.
-
         :return: The rotated position.
         """
 
@@ -646,7 +628,6 @@ class Avatar(ABC):
     def _plot_ik(self, target: np.array, arm: Arm) -> None:
         """
         Debug an IK solution by creating a plot.
-
         :param target: The target position.
         :param arm: The arm.
         """
@@ -663,7 +644,6 @@ class Avatar(ABC):
         :param target: The target position.
         :param arm: The arm.
         :param target_orientation: The target orientation. Can be None.
-
         :return: The IK angles and the IK target.
         """
 
@@ -732,7 +712,6 @@ class Avatar(ABC):
         """
         :param left: Joint values for the left arm.
         :param right: Joint values for the right arm.
-
         :return: A `set_sticky_mitten_profile` command.
         """
 
@@ -754,7 +733,6 @@ class Avatar(ABC):
     def get_start_bend_sticky_mitten_profile(self, arm: Arm) -> dict:
         """
         :param arm: The arm that is bending.
-
         :return: A `set_sticky_mitten_profile` command for beginning an arm-bending action.
         """
 
@@ -786,7 +764,6 @@ class Avatar(ABC):
     def get_reset_arm_sticky_mitten_profile(self, arm: Arm) -> dict:
         """
         :param arm: The arm that is resetting.
-
         :return: A `set_sticky_mitten_profile` command for beginning an arm-reset action.
         """
 
@@ -801,7 +778,6 @@ class Avatar(ABC):
     def get_roll_wrist_sticky_mitten_profile(self, arm: Arm) -> dict:
         """
         :param arm: The arm that is resetting.
-
         :return: A `set_sticky_mitten_profile` command for beginning to roll a wrist.
         """
 

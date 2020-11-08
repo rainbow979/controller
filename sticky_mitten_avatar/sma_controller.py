@@ -255,7 +255,7 @@ class StickyMittenAvatarController(FloorplanController):
                       f"{build_version}. This might cause errors!")
         '''
         
-    def init_scene(self, scene: str = None, layout: int = None, room: int = -1) -> None:
+    def init_scene(self, scene: str = None, layout: int = None, room: int = -1, data_id=0) -> None:
         """
         Initialize a scene, populate it with objects, and add the avatar.
 
@@ -305,10 +305,11 @@ class StickyMittenAvatarController(FloorplanController):
         self._cam_commands: Optional[list] = None
         
         #dataset
-        if self.dataset_id == self.dataset_n:
-            self.dataset_id = 0
-        self.data = self.dataset[self.dataset_id]
-        self.dataset_id += 1
+        #if self.dataset_id == self.dataset_n:
+        #    self.dataset_id = 0
+        dataset_id = data_id % self.dataset_n
+        self.data = self.dataset[dataset_id]
+        #self.dataset_id += 1
         scene = self.data['scene']['scene']
         layout = self.data['scene']['layout']
         room = self.data['scene']['room']

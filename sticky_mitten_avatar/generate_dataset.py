@@ -182,7 +182,7 @@ if __name__ == '__main__':
     layout = 0
     room = -1
     dataset = []
-    train = True
+    train = False
     if train:
         scenes = ['2a', '2b', '5a', '5b', '1a']
         layouts = [0, 1]
@@ -198,6 +198,7 @@ if __name__ == '__main__':
             for i in range(l):                
                 dataset.append(generate_data(scene, layout, room))
     print(len(dataset))
+    random.shuffle(dataset)
     with open(path, 'wb') as f:
         pickle.dump(dataset, f)
     print(time.time() - start)
