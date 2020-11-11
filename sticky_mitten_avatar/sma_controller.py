@@ -171,7 +171,7 @@ class StickyMittenAvatarController(FloorplanController):
     _STOP_DRAG = 1000
 
     def __init__(self, port: int = 1071, launch_build: bool = True, demo: bool = False, id_pass: bool = True,
-                 screen_width: int = 256, screen_height: int = 256, debug: bool = False, train = True):
+                 screen_width: int = 256, screen_height: int = 256, debug: bool = False, train = 0):
         """
         :param port: The port number.
         :param launch_build: If True, automatically launch the build.
@@ -185,10 +185,12 @@ class StickyMittenAvatarController(FloorplanController):
         self._debug = debug
         self._id_pass = id_pass
         
-        if train:
+        if train == 0:
             self.data_path = resource_filename(__name__, "train_dataset.pkl")
-        else:
+        elif train == 1:
             self.data_path = resource_filename(__name__, "test_dataset.pkl")
+        else:
+            self.data_path = resource_filename(__name__, "generate_dataset.pkl")
         
         with open(self.data_path, 'rb') as f:
             self.dataset = pickle.load(f)
@@ -255,7 +257,7 @@ class StickyMittenAvatarController(FloorplanController):
                       f"{build_version}. This might cause errors!")
         '''
         
-    def init_scene(self, scene: str = None, layout: int = None, room: int = -1, data_id=0) -> None:
+    def init_scene(self, scene: str = None, layout: int = None, room: int = -1, data_id=-1) -> None:
         """
         Initialize a scene, populate it with objects, and add the avatar.
 
@@ -307,9 +309,14 @@ class StickyMittenAvatarController(FloorplanController):
         #dataset
         #if self.dataset_id == self.dataset_n:
         #    self.dataset_id = 0
+        #if data_id > -1:
         dataset_id = data_id % self.dataset_n
         self.data = self.dataset[dataset_id]
-        #self.dataset_id += 1
+        '''else:
+            if self.dataset_id == self.dataset_n:
+                self.dataset_id = 0
+            self.data = self.dataset[self.dataset_id]
+            self.dataset_id += 1'''
         scene = self.data['scene']['scene']
         layout = self.data['scene']['layout']
         room = self.data['scene']['room']
