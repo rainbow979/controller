@@ -257,7 +257,7 @@ class StickyMittenAvatarController(FloorplanController):
                       f"{build_version}. This might cause errors!")
         '''
         
-    def init_scene(self, scene: str = None, layout: int = None, room: int = -1, data_id=-1) -> None:
+    def init_scene(self, scene: str = None, layout: int = None, room: int = -1, data_id=0) -> None:
         """
         Initialize a scene, populate it with objects, and add the avatar.
 
