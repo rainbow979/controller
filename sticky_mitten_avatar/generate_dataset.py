@@ -182,17 +182,23 @@ if __name__ == '__main__':
     layout = 0
     room = -1
     dataset = []
-    train = False
-    if train:
-        scenes = ['2a', '2b', '5a', '5b', '1a']
+    train = 2
+    if train == 0:
+        scenes = ['2a', '2b', '5a', '5b', '1a'] #10room
         layouts = [0, 1]
         l = 100
         path = 'train_dataset.pkl'
-    else:   
-        scenes = ['2a', '2b', '5a', '5b']
+        #20个 test
+    elif train == 1:
+        scenes = ['2a', '2b', '5a', '5b', '1a'] #10room
+        layouts = [0, 1]
+        l = 20
+        path = "test_dataset.pkl"
+    else:    
+        scenes = ['2a', '2b', '5a', '5b', '5c']   #5种
         layouts = [2]        
-        l = 25
-        path = 'test_dataset.pkl'
+        l = 40
+        path = 'generate_dataset.pkl'
     for scene in scenes:
         for layout in layouts:
             for i in range(l):                
@@ -202,3 +208,4 @@ if __name__ == '__main__':
     with open(path, 'wb') as f:
         pickle.dump(dataset, f)
     print(time.time() - start)
+    print(path)
