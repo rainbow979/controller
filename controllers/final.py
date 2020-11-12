@@ -29,7 +29,7 @@ import os
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-fff = open('trans.log', 'w', 10)
+
 
 DEMO = False
 
@@ -40,17 +40,20 @@ class Nav(StickyMittenAvatarController):
     3. 
     """
 
-    def __init__(self, port: int = 1071, launch_build: bool = False, demo=False):
+    def __init__(self, port: int = 1071, launch_build: bool = False, demo=False, train=1):
         """
         :param port: The port number.
         :param launch_build: If True, automatically launch the build.
         """
 
         super().__init__(port=port, launch_build=launch_build, \
-                id_pass=True, demo=DEMO)
+                id_pass=True, demo=DEMO, train=train)
         self.demo = demo
         self.max_steps = 1000
         self.map_id = 0
+        self.surface_object_categories = \
+                loads(SURFACE_OBJECT_CATEGORIES_PATH.read_text(encoding="utf-8"))
+        
         
     def save_infomation(self, output_directory='.'):
         frame_count = self.frame._frame_count
@@ -284,26 +287,32 @@ class Nav(StickyMittenAvatarController):
             if id not in self.static_object_info:
                 print('not in static:', id)
                 continue
+            if id in self.finish or id in self.held:
+                continue
             if self.static_object_info[id].target_object:
-                if id in self.finish:
-                    continue
+                
                 x, y, z = self.frame.object_transforms[id].position
                 _, i, j, _ = self.check_occupied(x, z)
-                self.explored_map[i, j] = 1
-                self.id_map[i, j] = id
-                self.object_list[0].append(id)
+                if self.explored_map[i, j] == 0:
+                    self.explored_map[i, j] = 1
+                    self.id_map[i, j] = id
+                    self.object_list[0].append(id)
             elif self.static_object_info[id].container:
                 x, y, z = self.frame.object_transforms[id].position
                 _, i, j, _ = self.check_occupied(x, z)
-                self.explored_map[i, j] = 2
-                self.id_map[i, j] = id
-                self.object_list[1].append(id)
-            elif self.static_object_info[id].model_name == self.goal_object:
+                if self.explored_map[i, j] == 0:
+                    self.explored_map[i, j] = 2
+                    self.id_map[i, j] = id
+                    self.object_list[1].append(id)
+            name = self.static_object_info[id].model_name
+            if name in self.surface_object_categories and \
+                self.surface_object_categories[name] == self.goal_object:
                 x, y, z = self.frame.object_transforms[id].position
                 _, i, j, _ = self.check_occupied(x, z)
-                self.explored_map[i, j] = 3
-                self.id_map[i, j] = id
-                self.object_list[2].append(id)
+                if self.explored_map[i, j] == 0:
+                    self.explored_map[i, j] = 3
+                    self.id_map[i, j] = id
+                    self.object_list[2].append(id)
             
     def grasp(self, object_id, arm):
         object_id = int(object_id)
@@ -314,24 +323,27 @@ class Nav(StickyMittenAvatarController):
             d_theta = -15
         grasped = False
         theta = 0
-        while theta <= 90 and not grasped:
+        while theta < 90 and not grasped:
             # Try to grasp the object.
+            self.step += 1
             start = time.time()
             status = self.grasp_object(object_id=object_id,
                                     arm=arm,
-                                    check_if_possible=False,
+                                    check_if_possible=True,
                                     stop_on_mitten_collision=True)
-            print('grasp time:', time.time() - start)
-            print(status)
+            #print('grasp time:', time.time() - start)
+            print('grasp:', status)
             if status == TaskStatus.success and \
                     object_id in self.frame.held_objects[arm]:
+                self._lift_arm(arm)
                 grasped = True
                 break
             # Turn a bit and try again.
             if not grasped:
                 self.turn_by(d_theta)
+                self.step += 1
                 theta += abs(d_theta)
-            print('theta:', theta)
+            #print('theta:', theta)
         return grasped
     
     
@@ -339,8 +351,9 @@ class Nav(StickyMittenAvatarController):
     def move_to(self, max_move_step = 100, d = 0.7):
         move_step = 0
         self.traj = []
-        self.draw_Astar_map()
-        print(self.map_num)
+        #self.draw_Astar_map()
+        #print(self.map_num)
+        too_long_num = 0
         while not self.check_goal(d) and move_step < max_move_step:
             step_time = time.time()
             self.step += 1
@@ -352,8 +365,8 @@ class Nav(StickyMittenAvatarController):
             self.map = np.maximum(self.map, pre_map)
             
             path = self.find_shortest_path(self.position, self.goal, self.gt_map)
-            i, j = path[min(2, len(path) - 1)]
-            x, z = self.get_occupancy_position(i, j)
+            gi, gj = path[min(2, len(path) - 1)]
+            x, z = self.get_occupancy_position(gi, gj)
             #assert T == True
             local_goal = [x, z]
             angle = TDWUtils.get_angle(forward=np.array(self.frame.avatar_transform.forward),
@@ -365,8 +378,8 @@ class Nav(StickyMittenAvatarController):
                 px, py, pz = self.frame.avatar_transform.position
                 status = self.move_forward_by(distance=DISTANCE,
                                                 move_force = 300,
-                                                move_stopping_threshold=0.12,
-                                                num_attempts = 30)                
+                                                move_stopping_threshold=0.2,
+                                                num_attempts = 25)                
                 x, y, z = self.frame.avatar_transform.position
                 _, i, j, _ = self.check_occupied(x, z)
                 self.traj.append((i, j))
@@ -374,18 +387,31 @@ class Nav(StickyMittenAvatarController):
                 if self.l2_distance((px, pz), (x, z)) < 0.1:
                     x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
                     _, i, j, _ = self.check_occupied(x, z)
-                    self.map[i, j] = 1
+                    self.gt_map[i, j] = 1
                 #if status == TaskStatus.too_long or status == TaskStatus.collided_with_environment:
                 #    x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
                 #    _, i, j, _ = self.check_occupied(x, z)
                 #    self.gt_map[i, j] = 1
             elif angle > 0:
-                status = self.turn_by(angle=-ANGLE, force=1200, num_attempts=25)
+                status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=15)
                 action = 1
+                if status == TaskStatus.too_long:
+                    self.turn_by(angle=ANGLE, force = 1000, num_attempts=15)
+                    self.move_forward_by(distance=DISTANCE,
+                                        move_force = 300,
+                                        move_stopping_threshold=0.2,
+                                        num_attempts = 25)   
+                    self.step += 2
             else:
-                status = self.turn_by(angle=ANGLE, force=1200, num_attempts=25)
+                status = self.turn_by(angle=ANGLE, force=1000, num_attempts=15)
                 action = 2
-            
+                if status == TaskStatus.too_long:
+                    self.turn_by(angle=-ANGLE, force = 1000, num_attempts=15)
+                    self.move_forward_by(distance=DISTANCE,
+                                        move_force = 300,
+                                        move_stopping_threshold=0.2,
+                                        num_attempts = 25)   
+                    self.step += 2                
             self.action_list.append(action)    
             action_time = time.time() - action_time
             step_time = time.time() - step_time
@@ -407,13 +433,30 @@ class Nav(StickyMittenAvatarController):
             
             self.f.flush()
         
-        self.draw_map()
-        return self.check_goal()
+        #self.draw_map()
+        return self.check_goal(d)
+    
+    def my_put_in_container(self, object_id, container_id, arm):
+        print('before position:', self.frame.object_transforms[object_id].position)
+        self._start_task()
+        self.drop(arm)        
+        position = {'x': float(20 + random.randint(0, 10)), 
+                    'y': float(0.),
+                    'z': float(20 + random.randint(0, 10))}
+        
+        self.communicate([{"$type": "teleport_object",
+               "position": position,
+               "id": object_id,
+               "physics": True}])
+        self._end_task() 
+        print('after position:', self.frame.object_transforms[object_id].position)
+        return True
     
     def interact(self, object_id):
+        print('begin interact:', self.sub_goal)
         object_id = int(object_id)
-        self.frame.save_images(self.output_dir + f'/self.sub_goal')
-        print('??')
+        #self.frame.save_images(self.output_dir + f'/self.sub_goal')
+        #print('??')
         #print(self.static_object_info[object_id].model_name)
         #d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
         #self.step += d / 0.5        
@@ -427,39 +470,40 @@ class Nav(StickyMittenAvatarController):
                 holding_arms.append(a)
         for a in holding_arms:
             self._lift_arm(arm=a, lift_high=lift_high)
-        print('!!')
+        #print('!!')
         Flag = False
         
         x, y, z = self.frame.object_transforms[object_id].position
         self.goal = (x, z)
-        if not self.move_to():
+        s = False
+        if self.sub_goal == 2:
+            s = self.move_to(d = 1.5)
+        else:
+            s = self.move_to()
+        if not s:
+            print('move position:', self.frame.object_transforms[object_id].position)
+            print(self.static_object_info[object_id].model_name)
+            d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
+            print('d0:', d)
             return False
          
         d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
-        print('distance:', d)
-        print(object_id)
-        print(self.static_object_info[object_id].model_name)
+        #print('distance:', d)
+        #print(object_id)
+        #print(self.static_object_info[object_id].model_name)
         #self.turn_to(object_id)
+        self.step += 1
         if self.sub_goal < 2:
-            print(self.go_to(object_id, move_stopping_threshold=0.3))
+            self.go_to(object_id, move_stopping_threshold=0.3)
         else:
-            print(self.go_to(object_id, move_stopping_threshold=0.7))
-        for i in range(3):
-            d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
-            print('distance:', d)
-            if d > 0.7:
-                for a in holding_arms:
-                    self.reset_arm(arm=a)
-                    self._lift_arm(arm=a, lift_high=lift_high)
-                self.go_to(object_id, move_stopping_threshold=0.3)
-            else:
-                Flag = True
-                break
-        if d > 1.0:
+            self.go_to(object_id, move_stopping_threshold=0.6)
+        d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
+        if d > 0.7 and self.sub_goal < 2:
+            print('d1:', d)
             return False
         for a in holding_arms:
             self._lift_arm(arm=a, lift_high=lift_high)
-        
+        #print('sub goal:', self.sub_goal)
         if self.sub_goal < 2:
             grasp_arms = []
             
@@ -468,32 +512,46 @@ class Nav(StickyMittenAvatarController):
                     grasp_arms.append(a)
             Flag = False
             arm = None
-            for a in grasp_arms:
+            print('grasp arm:', len(grasp_arms))
+            if len(grasp_arms) == 0:
+                return False
+            x, y, z = self.frame.object_transforms[object_id].position
+            _, i, j, _ = self.check_occupied(x, z)
+            if not self.grasp(object_id, grasp_arms[0]):
+                return False
+            arm = grasp_arms[0]
+            print('grasp:', object_id)
+            self.explored_map[i, j] = 0
+            index = np.where(self.id_map == object_id)
+            self.explored_map[index[0], index[1]] = 0            
+            '''for a in grasp_arms:
                 Flag = self.grasp(object_id, a)
                 if Flag:
                     arm = a
-                    break
-            if Flag and self.static_object_info[object_id].container:
+                    break'''
+            if self.static_object_info[object_id].container:
                 self.content_container[object_id] = []
-            if Flag and self.container_held is not None:
-                print('???')
+                for a in holding_arms:
+                    for o in self.frame.held_objects[a]:
+                        print('put_in_container:', a, o)
+                        self.my_put_in_container(object_id=o,
+                                                container_id = object_id,
+                                                arm=a)
+                        self.content_container[object_id].append(o)
+            if self.container_held is not None:
+                #print('???')
                 start = time.time()
-                print(self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])
-                status = self.put_in_container(object_id=object_id,
+                print('before:', self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])
+                status = self.my_put_in_container(object_id=object_id,
                                                 container_id = self.container_held,
                                                 arm=arm)
-                print('put_in_container:', status, time.time() - start)
-                print(self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])                
-                print('!!!')
-                if status != TaskStatus.success:
-                    if arm == Arm.left:
-                        arm = Arm.right
-                    else:
-                        arm = Arm.left
-                    status = self.grasp(self.container_held, arm = arm)
+                #print('put_in_container:', status, time.time() - start)
+                print('position:', self.frame.object_transforms[object_id].position)
+                print('after:', self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])                
+                #print('!!!')
                 self.content_container[self.container_held].append(object_id)
-                if self.static_object_info[object_id].target_object:
-                    self.update_held(object_id)
+            if self.static_object_info[object_id].target_object:
+                self.update_held(object_id)
         else:
             Flag = True            
             for id in self.held_objects:
@@ -528,7 +586,7 @@ class Nav(StickyMittenAvatarController):
             if len(self.object_list[1]) > 0:
                 if self.sub_goal < 2 and not self.container_held and \
                                 self.target_object_held.sum() > 2:
-                    print('begin interact with container')
+                    #print('begin interact with container')
                     self.sub_goal = 1
                     goal = random.choice(self.object_list[1])
                     self.interact(goal)
@@ -536,7 +594,7 @@ class Nav(StickyMittenAvatarController):
             
             if len(self.object_list[self.sub_goal]) > 0:
                 #interact
-                print('begin interact')
+                #print('begin interact')
                 goal = random.choice(self.object_list[self.sub_goal])
                 self.interact(goal)
                 return
@@ -555,8 +613,8 @@ class Nav(StickyMittenAvatarController):
                 px, py, pz = self.frame.avatar_transform.position
                 status = self.move_forward_by(distance=DISTANCE,
                                                 move_force = 300,
-                                                move_stopping_threshold=0.12,
-                                                num_attempts = 30)                
+                                                move_stopping_threshold=0.2,
+                                                num_attempts = 25)                
                 x, y, z = self.frame.avatar_transform.position
                 _, i, j, _ = self.check_occupied(x, z)
                 self.traj.append((i, j))
@@ -570,10 +628,10 @@ class Nav(StickyMittenAvatarController):
                 #    _, i, j, _ = self.check_occupied(x, z)
                 #    self.gt_map[i, j] = 1
             elif angle > 0:
-                status = self.turn_by(angle=-ANGLE, force=1200, num_attempts=25)
+                status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=15)
                 action = 1
             else:
-                status = self.turn_by(angle=ANGLE, force=1200, num_attempts=25)
+                status = self.turn_by(angle=ANGLE, force=1000, num_attempts=15)
                 action = 2
             
             self.action_list.append(action)    
@@ -603,6 +661,8 @@ class Nav(StickyMittenAvatarController):
 
         :param arm: The arm.
         """
+        return
+        self.step += 1
         start = time.time()
         if lift_high:
             y = 0.6
@@ -612,7 +672,7 @@ class Nav(StickyMittenAvatarController):
                               target={"x": -0.2 if arm == Arm.left else 0.2, "y": y, "z": 0.3},
                               check_if_possible=True,
                               stop_on_mitten_collision=True)
-        print('lift time:', status, time.time() - start)
+        #print('lift time:', status, time.time() - start)
             
     def draw_map(self):
         self.map_num += 1
@@ -662,18 +722,20 @@ class Nav(StickyMittenAvatarController):
         return self.static_object_info[id].container
     
     def container_full(self, container):
-        start = time.time()
+        '''start = time.time()
         overlap_ids = self._get_objects_in_container(container_id=container)        
         end = time.time()
         if end - start > 0.1:
             print('full takes too much time')
-        return len(overlap_ids) > 3
+        return len(overlap_ids) > 3'''
+        return len(self.content_container[container]) > 3
     
     def decide_sub(self):
         self.held_objects = []
         self.held_objects.extend(self.frame.held_objects[Arm.left])
         self.held_objects.extend(self.frame.held_objects[Arm.right])
-        if self.target_object_held.sum() == 0:
+        if self.target_object_held.sum() == 0 or \
+                (self.step > self.max_steps - 250 and len(self.held_objects) > 0):
             #all objects are found
             self.sub_goal = 2
         #elif self.step > self.max_steps - 50 and len(self.held_objects) > 0
@@ -690,19 +752,31 @@ class Nav(StickyMittenAvatarController):
                         return
             if self.container_held is None:
                 #self.find_container_step < self.max_container_step and \
+                if len(self.held_objects) >= 2:
+                    self.sub_goal = 2
                 if self.target_object_held.sum() > 2:
                     self.sub_goal = 1
                 else:
-                    self.sub_goal = 0             
+                    if self.step < 700:
+                        self.sub_goal = 1
+                    else:
+                        self.sub_goal = 0
     
     def ex_goal(self):
-        while True:
+        try_step = 0
+        while try_step < 7:
+            try_step += 7
             goal = np.where(self.known_map == 0)
             idx = random.randint(0, goal[0].shape[0] - 1)
             i, j = goal[0][idx], goal[1][idx]
             if self.gt_map[i, j] == 0:
                 self.goal = self.get_occupancy_position(i, j)        
                 break
+        if try_step >= 7:
+            goal = np.where(self.gt_map == 0)
+            idx = random.randint(0, goal[0].shape[0] - 1)
+            i, j = goal[0][idx], goal[1][idx]
+            self.goal = self.get_occupancy_position(i, j)        
     
     def update_finish(self, id):
         name = self.static_object_info[id].model_name
@@ -710,21 +784,20 @@ class Nav(StickyMittenAvatarController):
         self.target_object_list[self.target_object_dict[name]] -= 1 
         
     def update_held(self, id):
+        self.held[id] = 1
         name = self.static_object_info[id].model_name
         print('held finish:', name)
         self.target_object_held[self.target_object_dict[name]] -= 1 
     
     
     def draw_init_map(self, num):
-        self.surface_object_categories = \
-                    loads(SURFACE_OBJECT_CATEGORIES_PATH.read_text(encoding="utf-8"))
         W, H = self.occupancy_map.shape
         self.paint = np.zeros((W, H, 3))
         self.paint.fill(100)
         self.paint[self.occupancy_map == 1, 0:3] = 255
         for id in self.static_object_info:
             if self.static_object_info[id].container:
-                print('container:', self.static_object_info[id].model_name)
+                #print('container:', self.static_object_info[id].model_name)
                 x, y, z = self.frame.object_transforms[id].position
                 _, i, j, _ = self.check_occupied(x, z)
                 self.paint[i, j] = np.array([220,20,60])    #red
@@ -743,10 +816,13 @@ class Nav(StickyMittenAvatarController):
         self.paint = cv2.resize(self.paint, dsize=(0, 0), fx = 4, fy = 4)
         cv2.imwrite(f'./map{num}.jpg', self.paint)   
         
-    def run(self, scene='2a', layout=1, output_dir='transport') -> None:
+    def run(self, scene='2a', layout=1, output_dir='transport', data_id = 0) -> None:
         """
         Run a single trial. Save images per frame.
         """        
+        self.find_goal = 0
+        self.find_object = 0
+        self.find_container = 0
         if isinstance(output_dir, str):
             output_path = Path(output_dir)
         if not output_path.exists():
@@ -755,15 +831,9 @@ class Nav(StickyMittenAvatarController):
         self.output_dir = output_dir
         output_directory = output_dir        
         start_time = time.time()
-        self.init_scene(scene=scene, layout=layout, room = 0)        
+        self.init_scene(scene=scene, layout=layout, room = 0, data_id = data_id)        
         print('init scene time:', time.time() - start_time)
         self.action_list = []
-        for i in range(5):
-            self.map_shape = self.occupancy_map.shape
-            self.draw_init_map(i)
-            self.init_scene(scene=scene, layout=layout, room = 0)
-            
-        return
         if DEMO:
             self.add_overhead_camera({"x": 5.8, "y": 4.0, "z": -1.3}, target_object="a", images="cam")        
     
@@ -781,13 +851,13 @@ class Nav(StickyMittenAvatarController):
         #0: unknown, 1: object_id(only target and container)
         self.id_map = np.zeros_like(self.occupancy_map, np.int32)
         
-        print('occupancy_map shape:', self.occupancy_map.shape)
+        #print('occupancy_map shape:', self.occupancy_map.shape)
         W, H = self.occupancy_map.shape
         self.map_shape = self.occupancy_map.shape        
         
         x, y, z = self.frame.avatar_transform.position
         self.position = self.frame.avatar_transform.position
-        print('init position:', x, y, z)
+        #print('init position:', x, y, z)
         #assert self.check_occupied(x, z)[3] == 1
         W, H = self.occupancy_map.shape
         
@@ -821,10 +891,11 @@ class Nav(StickyMittenAvatarController):
                             'bench': 4}
         #self.goal_vec = np.zeros(5, np.int32)
         #self.goal_vec[self.goal_dict[self.goal_object]] += 1
-        self.goal_object = "coffee table"
+        #self.goal_object = "coffee table"
         #self.goal_idx.append(random.choice(self._target_object_ids))
         #self.goal_idx.append(random.choice(self.container))
         self.finish = {}
+        self.held = {}
         self.content_container = {}
         
         self.f = open(f'./{output_dir}/nav.log', 'w')
@@ -839,95 +910,44 @@ class Nav(StickyMittenAvatarController):
         #3: Nav
         self.sub_goal = 1
         self.nav_goal = 0
+        self.try_grasp = {}
         tot_start = time.time()
         while self.step < self.max_steps and self.target_object_list.sum() > 0:
             #make sure sub_goal
-            print(self.target_object_held.sum(), self.target_object_list.sum())
+            #print(self.target_object_held.sum(), self.target_object_list.sum())
             self.decide_sub()
             
             goal = np.where(self.explored_map == self.sub_goal + 1)
+            print('sub:', self.sub_goal, self.step, goal[0].shape[0])
             if goal[0].shape[0] > 0:                
-                idx = random.randint(0, goal[0].shape[0] - 1)
+                #idx = random.randint(0, goal[0].shape[0] - 1)
+                idx = 0
                 i, j = goal[0][idx], goal[1][idx]
                 self.goal = self.get_occupancy_position(i, j)
+                #print(self.id_map[i, j])
+                if self.id_map[i, j] in self.held:
+                    self.explored_map[i, j] = 0
+                    continue
+                if self.sub_goal < 2:
+                    if self.id_map[i, j] not in self.try_grasp:
+                        self.try_grasp[self.id_map[i, j]] = 0
+                    self.try_grasp[self.id_map[i, j]] += 1
+                    if self.try_grasp[self.id_map[i, j]] >= 4:
+                        self.try_grasp[self.id_map[i, j]] = 2
+                        self.explored_map[i, j] = 0
+                        self.id_map[i, j] = 0                        
+                        continue
                 self.interact(self.id_map[i, j])
-            else:
-                self.ex_goal()
-                self.nav(self.step + 30)
-        self.decide_sub()
-        print(self.held_objects)
+                continue
+            self.ex_goal()
+            self.nav(self.step + 60)
+    
+        #self.decide_sub()
+        #print(self.held_objects)
         
         print('fianl time:', time.time()  - tot_start)
         
-        '''for i in range(2):
-            fff.write(f' {self.static_object_info[self.object_id].model_name} ')
-            self.draw_Astar_map()
-            self.nav()
-            self.draw_map()
-            fff.write(f'goal{i}_{self.check_goal()} ')
-            return
-            #assert self.check_goal()
-            #if self.check_goal():
-            print('check_goal:', self.check_goal())
-            if True:
-                self.step = 0
-                
-                self.action_list.append(4)
-                if self.idx > 0:
-                    print('turn to: ', self.turn_to(target=self.object_id, force=300))
-                    self.arm = Arm.right
-                    self.reset_arm(Arm.right)
-                    self.lift_arm(Arm.right)
-                else:
-                    self.arm = Arm.left
-                print('go to: ', self.go_to(target=self.object_id, move_stopping_threshold=0.3))
-                start = time.time()
-                grasped = self.grasp(self.object_id, self.arm)
-                print('grasp:', grasped, self.frame.held_objects[self.arm])             
-                print('grasp time:', time.time() - start)
-                print(self.frame.held_objects[self.arm])
-                fff.write(f'{i}_{grasped} ')
-                if self.idx > 0:
-                    print(self.reset_arm(arm=Arm.right))
-                    print(self.reset_arm(arm=Arm.left))                    
-                    self.lift_arm(arm=Arm.right)
-                    s = len(self.frame.held_objects[Arm.left]) > 0 and len(self.frame.held_objects[Arm.right]) > 0
-                    print(s)
-                    fff.write(f'both_{s} ')
-                    status = self.put_in_container(object_id=self.goal_idx[0],
-                                            container_id=self.goal_idx[1],
-                                            arm=Arm.left)
-                    print('hold:', status)
-                    if status == TaskStatus.success:
-                        fff.write('h_True ')
-                        status = self.pour_out_container(arm=Arm.right)
-                        print('pour out:', status)
-                        if status == TaskStatus.success:
-                            fff.write('p_True ')
-                        else:
-                            fff.write('p_False ')
-                    else:
-                        fff.write('h_False ')
-                    
-                    self.reset_arm(arm=Arm.right)
-                    self.reset_arm(arm=Arm.left)                    
-                    self.lift_arm(arm=Arm.right)
-                    
-                
-                ff.write('object_id: {}, position: {}, name: {}, grasp: {}\n'.format(
-                        self.object_id,
-                        self.get_object_position(self.object_id),
-                        self.static_object_info[self.object_id].model_name,
-                        grasped))
-                self.idx += 1
-                if self.idx == self.n:
-                    break
-                self.object_id = self.goal_idx[self.idx]
-                x, y, z = self.get_object_position(self.object_id)
-                self.goal = (x, z)
-                
-                print('goal position:', self.goal)'''
-            
+        
         
         
                 
@@ -939,14 +959,37 @@ class Nav(StickyMittenAvatarController):
 
 
 if __name__ == "__main__":
-    port = 1076
+    dd = input()
+    dd = int(dd)
+    port = 1075 + dd
     docker_id = create_tdw(port=port)
-    c = Nav(port=port, launch_build=False, demo=False)
-    try:        
-        for i in range(1):
+    c = Nav(port=port, launch_build=False, demo=False, train=1)
+    try:
+        total_grasp = 0
+        total_finish = 0
+        total = 0
+        rate_grasp = 0
+        rate_finish = 0        
+        fff = open(f'trans{dd}.log', 'w', 10)
+        for i in range(110, 150):
+            
+            c.run(output_dir=f'trans{dd}', data_id = i)
+            total_grasp += c.total_target_object - c.target_object_held.sum()
+            total_finish += c.total_target_object - c.target_object_list.sum()
+            total += c.total_target_object
+            rate_grasp += 1 - c.target_object_held.sum() / c.total_target_object
+            rate_finish += 1 - c.target_object_list.sum() / c.total_target_object
             print('epoch ', i)
-            fff.write(f'\nepoch {i}:')
-            c.run(output_dir='trans0')
+            print('grasp:', c.total_target_object - c.target_object_held.sum())
+            print('finish:', c.total_target_object - c.target_object_list.sum())
+            print('total:', c.total_target_object)
+            fff.write(f'epoch {i}:')
+            fff.write(f'grasp: {c.total_target_object - c.target_object_held.sum()}')
+            fff.write(f'finish: {c.total_target_object - c.target_object_list.sum()}')
+            fff.write(f'total: {c.total_target_object}\n')
             fff.flush()
+        
+        print(total_grasp, total_finish, total, rate_grasp, rate_finish)
+        print(total_grasp / 200, total_finish / 200, total / 200, rate_grasp / 200, rate_finish / 200)
     finally:        
         kill_tdw(docker_id)

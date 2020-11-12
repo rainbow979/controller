@@ -320,7 +320,7 @@ class StickyMittenAvatarController(FloorplanController):
         scene = self.data['scene']['scene']
         layout = self.data['scene']['layout']
         room = self.data['scene']['room']
-        print('scene:', scene, layout, room, data_id)
+        print('scene:', scene, layout, room, data_id) 
         # Initialize the scene.
         resp = self.communicate(self._get_scene_init_commands(scene=scene, layout=layout, room=room))
         self._avatar = Baby(debug=self._debug, resp=resp)
@@ -641,8 +641,10 @@ class StickyMittenAvatarController(FloorplanController):
         """
 
         done = False
-        while not done:
+        step = 0
+        while not done and step < 60:
             done = True
+            step += 1
             # The loop is done if the IK goals are done.
             if not self._avatar.is_ik_done():
                 done = False
@@ -1361,9 +1363,10 @@ class StickyMittenAvatarController(FloorplanController):
                 ix, iy = c['ixy']
                 x, z = self.get_occupancy_position(ix, iy)
                 container_name = c['name']
+                SCALE = {"x": 0.4, "y": 0.4, "z": 0.4}
                 container_id, container_commands = self._add_object(position=c['position'],
                                                                     rotation=c['rotation'],
-                                                                    scale=CONTAINER_SCALE,
+                                                                    scale=SCALE,
                                                                     audio=self._default_audio_values[
                                                                         container_name],
                                                                     model_name=container_name)
