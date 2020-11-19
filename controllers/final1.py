@@ -16,6 +16,7 @@ import pickle
 from sticky_mitten_avatar.task_status import TaskStatus
 from sticky_mitten_avatar.paths import SURFACE_OBJECT_CATEGORIES_PATH
 import argparse
+
 import random
 
 import gym
@@ -34,7 +35,7 @@ from json import loads
 import os
 
 
-EXPLORED_POLICY = 2
+EXPLORED_POLICY = 0
 
 DEMO = False
 
@@ -141,7 +142,7 @@ class Nav(StickyMittenAvatarController):
         super_map2 = self.conv2d(map)
         dist_map[super_map2 > 0] = 1000
         dist_map[map > 0] = 100000
-        
+        self.dist_map = dist_map
         #print('min dist:', dist_map.min())
         #print('max dist:', dist_map.max())
         #dist_map
@@ -289,7 +290,8 @@ class Nav(StickyMittenAvatarController):
                 if self.explored_map[i, j] == 0:
                     self.explored_map[i, j] = 1
                     self.id_map[i, j] = id
-                    self.net_map[0, 2, i, j] = 1
+                    if EXPLORED_POLICY > 0:
+                        self.net_map[0, 2, i, j] = 1
                     self.object_list[0].append(id)
             elif self.static_object_info[id].container:
                 x, y, z = self.frame.object_transforms[id].position
@@ -297,7 +299,8 @@ class Nav(StickyMittenAvatarController):
                 if self.explored_map[i, j] == 0:
                     self.explored_map[i, j] = 2
                     self.id_map[i, j] = id
-                    self.net_map[0, 3, i, j] = 1
+                    if EXPLORED_POLICY > 0:
+                        self.net_map[0, 3, i, j] = 1
                     self.object_list[1].append(id)
             name = self.static_object_info[id].model_name
             if name in self.surface_object_categories and \
@@ -306,7 +309,8 @@ class Nav(StickyMittenAvatarController):
                 _, i, j, _ = self.check_occupied(x, z)
                 if self.explored_map[i, j] == 0:
                     self.explored_map[i, j] = 3
-                    self.net_map[0, 4, i, j] = 1
+                    if EXPLORED_POLICY > 0:
+                        self.net_map[0, 4, i, j] = 1
                     self.id_map[i, j] = id
                     self.object_list[2].append(id)
             
@@ -344,7 +348,7 @@ class Nav(StickyMittenAvatarController):
     
     
     
-    def move_to(self, max_move_step = 100, d = 0.7):
+    def move_to(self, max_move_step = 130, d = 0.7):
         move_step = 0
         #self.traj = []
         #self.draw_Astar_map()
@@ -364,7 +368,7 @@ class Nav(StickyMittenAvatarController):
             
             self.update_map()
             
-            path = self.find_shortest_path(self.position, self.goal, self.gt_map)
+            path = self.find_shortest_path(self.position, self.goal, self.map)
             gi, gj = path[min(2, len(path) - 1)]
             x, z = self.get_occupancy_position(gi, gj)
             #assert T == True
@@ -402,7 +406,7 @@ class Nav(StickyMittenAvatarController):
                                         move_stopping_threshold=0.2,
                                         num_attempts = 25)   
                     self.step += 2
-                    move_step += 2
+                    #move_step += 1
                     x, y, z = self.frame.avatar_transform.position
                     _, i, j, _ = self.check_occupied(x, z)
                     self.traj.append((i, j))
@@ -416,7 +420,7 @@ class Nav(StickyMittenAvatarController):
                                         move_stopping_threshold=0.2,
                                         num_attempts = 25)   
                     self.step += 2   
-                    move_step += 2
+                    #move_step += 1
                     x, y, z = self.frame.avatar_transform.position
                     _, i, j, _ = self.check_occupied(x, z)
                     self.traj.append((i, j))
@@ -459,7 +463,7 @@ class Nav(StickyMittenAvatarController):
                    "physics": True}])
             self._end_task() 
         except:
-            print('error')
+            print('put_in_container Error')
         #print('after position:', self.frame.object_transforms[object_id].position)
         return True
     
@@ -498,7 +502,7 @@ class Nav(StickyMittenAvatarController):
             #print('move position:', self.frame.object_transforms[object_id].position)
             #print(self.static_object_info[object_id].model_name)
             d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
-            #print('d0:', d)
+            print('d0:', d)
             return False
          
         d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
@@ -544,7 +548,8 @@ class Nav(StickyMittenAvatarController):
                     arm = a
                     break'''
             if self.static_object_info[object_id].container:
-                self.net_map[0, 3, i, j] = 0
+                if EXPLORED_POLICY > 0:
+                    self.net_map[0, 3, i, j] = 0
                 self.content_container[object_id] = []
                 for a in holding_arms:
                     for o in self.frame.held_objects[a]:
@@ -566,7 +571,8 @@ class Nav(StickyMittenAvatarController):
                 #print('!!!')
                 self.content_container[self.container_held].append(object_id)
             if self.static_object_info[object_id].target_object:
-                self.net_map[0, 2, i, j] = 0
+                if EXPLORED_POLICY > 0:
+                    self.net_map[0, 2, i, j] = 0
                 self.update_held(object_id)
         else:
             Flag = True            
@@ -624,7 +630,7 @@ class Nav(StickyMittenAvatarController):
                 return
             action_time = time.time()
             if EXPLORED_POLICY != 1:
-                path = self.find_shortest_path(self.position, self.goal, self.gt_map)
+                path = self.find_shortest_path(self.position, self.goal, self.map)
                 i, j = path[min(2, len(path) - 1)]
                 x, z = self.get_occupancy_position(i, j)
                 #assert T == True
@@ -662,7 +668,7 @@ class Nav(StickyMittenAvatarController):
                                             move_stopping_threshold=0.2,
                                             num_attempts = 25)   
                         self.step += 2
-                        nav_step += 2
+                        #nav_step += 1
                         x, y, z = self.frame.avatar_transform.position
                         _, i, j, _ = self.check_occupied(x, z)
                         self.traj.append((i, j))
@@ -676,7 +682,7 @@ class Nav(StickyMittenAvatarController):
                                             move_stopping_threshold=0.2,
                                             num_attempts = 25)   
                         self.step += 2
-                        nav_step += 2
+                        #nav_step += 1
                         x, y, z = self.frame.avatar_transform.position
                         _, i, j, _ = self.check_occupied(x, z)
                         self.traj.append((i, j))
@@ -883,8 +889,12 @@ class Nav(StickyMittenAvatarController):
         cv2.imwrite(f'./map{num}.jpg', self.paint)   
     
     def construct_map(self):
+        
         self.net_size = (128, 48)
+        
         self.net_map = np.zeros((1, 6, 128, 48), np.int32)
+        if EXPLORED_POLICY == 0:
+            return
         W = (128 - self.occupancy_map.shape[0])
         H = 48 - self.occupancy_map.shape[1]
         self.gt_map = np.pad(self.gt_map, ((0, W), (0, H)), 'edge')
@@ -909,6 +919,8 @@ class Nav(StickyMittenAvatarController):
         self.masks = torch.ones(1, 1).to(self.device)
     
     def update_map(self):
+        if EXPLORED_POLICY == 0:
+            return
         self.net_map[0, 1] = self.known_map
         x, y, z = self.frame.avatar_transform.position
         _, i, j, _ = self.check_occupied(x, z)
@@ -943,7 +955,7 @@ class Nav(StickyMittenAvatarController):
                 base_kwargs={'recurrent': False})
         self.actor_critic.to(self.device)
         self.actor_critic, ob_rms = \
-                torch.load(os.path.join("/data/vision/torralba/scratch/chuang/tdw_gym/ppo/trained_models/ppo2/transport-v0.pt"))
+                torch.load(os.path.join("/data/vision/torralba/scratch/chuang/tdw_gym/ppo/trained_models/ppo/transport-v0.pt"))
         
     def _obs(self):
         depth = self.frame.get_depth_values() / 100.1
@@ -992,14 +1004,16 @@ class Nav(StickyMittenAvatarController):
         self.gt_map[self.occupancy_map != 1] = 1
         
         self.construct_policy()
-        self.W = 128
-        self.H = 48        
+        #self.W = 128
+        #self.H = 48        
         if EXPLORED_POLICY == 0:
-            self.W = 330
-            self.H = 150
+            #self.W = 200
+            #self.H = 100
+            self.W = self.occupancy_map.shape[0]
+            self.H = self.occupancy_map.shape[1]
             x, y, z = self.frame.avatar_transform.position
-            self._scene_bounds["x_min"] = x - self.W / 2 / 4
-            self._scene_bounds["z_min"] = z - self.H / 2 / 4
+            #self._scene_bounds["x_min"] = x - self.W / 2 / 4
+            #self._scene_bounds["z_min"] = z - self.H / 2 / 4
             #self.map = np.zeros_like(self.occupancy_map)
             self.map = np.zeros((self.W, self.H))
             #0: unknown, 1: known
@@ -1097,7 +1111,8 @@ class Nav(StickyMittenAvatarController):
                 #print(self.id_map[i, j])
                 if self.id_map[i, j] in self.held:
                     self.explored_map[i, j] = 0
-                    self.net_map[2, i, j] = self.net_map[3, i, j] = 0
+                    if EXPLORED_POLICY > 0:
+                        self.net_map[2, i, j] = self.net_map[3, i, j] = 0
                     continue
                 if self.sub_goal < 2:
                     if self.id_map[i, j] not in self.try_grasp:
@@ -1112,9 +1127,9 @@ class Nav(StickyMittenAvatarController):
                 continue
             if EXPLORED_POLICY == 0:
                 self.ex_goal()
-                self.nav(self.step + 60)
+                self.nav(self.step+60)
             elif EXPLORED_POLICY == 1:
-                self.nav(self.step + 60)
+                self.nav(60)
             else:
                 #pass
                 self.get_object_list()
@@ -1122,7 +1137,7 @@ class Nav(StickyMittenAvatarController):
                 self.map = np.maximum(self.map, pre_map)
                 self.update_map()
                 self.high_policy()
-                self.nav(self.step + 60)
+                self.nav(60)
         #self.decide_sub()
         #print(self.held_objects)
         
@@ -1145,20 +1160,21 @@ if __name__ == "__main__":
         '--step', type=int, default=25)
     args = parser.parse_args()
     dd = args.dd
+    
     dd = int(dd)
-    port = 30014 + dd
+    port = 18015 + dd
     docker_id = create_tdw(port=port)
     c = Nav(port=port, launch_build=False, demo=False, train=2)
+    fff = open(f'trans_ran_f{dd}.log', 'w', 10)
     try:
         total_grasp = 0
         total_finish = 0
         total = 0
         rate_grasp = 0
-        rate_finish = 0        
-        fff = open(f'trans_semantic_5{dd}.log', 'w', 10)
+        rate_finish = 0                
         for i in range(dd * args.step, dd * args.step + args.step):
             
-            c.run(output_dir=f'trans_semantic_5{dd}', data_id = i)
+            c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
             total_grasp += c.total_target_object - c.target_object_held.sum()
             total_finish += c.total_target_object - c.target_object_list.sum()
             total += c.total_target_object
@@ -1179,3 +1195,4 @@ if __name__ == "__main__":
         print(total_grasp / 200, total_finish / 200, total / 200, rate_grasp / 200, rate_finish / 200)
     finally:        
         kill_tdw(docker_id)
+        fff.close()

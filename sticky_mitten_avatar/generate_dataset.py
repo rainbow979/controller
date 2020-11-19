@@ -5,10 +5,7 @@ import random
 import numpy as np
 from pkg_resources import resource_filename
 from typing import Dict, List, Union, Optional, Tuple
-from tdw.floorplan_controller import FloorplanController
-from tdw.tdw_utils import TDWUtils, QuaternionUtils
-from tdw.output_data import Bounds, Rigidbodies, SegmentationColors, Raycast, CompositeObjects, Overlap, Transforms,\
-    Version
+
 from tdw.py_impact import AudioMaterial, PyImpact, ObjectInfo
 from tdw.object_init_data import AudioInitData
 from tdw.release.pypi import PyPi
@@ -182,7 +179,7 @@ if __name__ == '__main__':
     layout = 0
     room = -1
     dataset = []
-    train = 2
+    train = 3
     if train == 0:
         scenes = ['2a', '2b', '5a', '5b', '1a'] #10room
         layouts = [0, 1]
@@ -194,17 +191,22 @@ if __name__ == '__main__':
         layouts = [0, 1]
         l = 20
         path = "test_dataset.pkl"
-    else:    
+    elif train == 2:    
         scenes = ['2a', '2b', '5a', '5b', '5c']   #5种
         layouts = [2]        
         l = 40
         path = 'generate_dataset.pkl'
+    else:
+        scenes = ['2a', '2b', '5a', '5b', '5c']   #5种
+        layouts = [2]        
+        l = 40
+        path = 'extra.pkl'
     for scene in scenes:
         for layout in layouts:
             for i in range(l):                
                 dataset.append(generate_data(scene, layout, room))
     print(len(dataset))
-    random.shuffle(dataset)
+    #random.shuffle(dataset)
     with open(path, 'wb') as f:
         pickle.dump(dataset, f)
     print(time.time() - start)

@@ -457,7 +457,7 @@ class Nav(StickyMittenAvatarController):
                    "position": position,
                    "id": object_id,
                    "physics": True}])
-            self._end_task() 
+            self._end_task()
         except:
             print('error')
         #print('after position:', self.frame.object_transforms[object_id].position)
@@ -824,7 +824,7 @@ class Nav(StickyMittenAvatarController):
                 #self.find_container_step < self.max_container_step and \
                 if len(self.held_objects) >= 2:
                     self.sub_goal = 2
-                if self.target_object_held.sum() > 2 and self.step < 700:
+                if self.target_object_held.sum() > 2 and self.step < 800:
                     self.sub_goal = 1
                 else:                    
                     self.sub_goal = 0
@@ -934,7 +934,7 @@ class Nav(StickyMittenAvatarController):
                               256,
                               256), dtype=np.float32)'''
         observation_space = gym.spaces.Box(0, 1,
-                                (6, 128, 48), dtype=np.int32)
+                                (2, 128, 48), dtype=np.int32)
         #action_space = gym.spaces.Discrete(3)
         action_space = gym.spaces.Box(low=0.0, high=1.0, shape = (2, ), dtype=np.float32)
         self.actor_critic = Policy(
@@ -943,7 +943,7 @@ class Nav(StickyMittenAvatarController):
                 base_kwargs={'recurrent': False})
         self.actor_critic.to(self.device)
         self.actor_critic, ob_rms = \
-                torch.load(os.path.join("/data/vision/torralba/scratch/chuang/tdw_gym/ppo/trained_models/ppo2/transport-v0.pt"))
+                torch.load(os.path.join("/data/vision/torralba/scratch/chuang/tdw_gym/ppo/trained_models/ppo1/transport-v0.pt"))
         
     def _obs(self):
         depth = self.frame.get_depth_values() / 100.1
@@ -953,7 +953,8 @@ class Nav(StickyMittenAvatarController):
         return depth
     
     def high_policy(self):
-        obs = torch.from_numpy(self.net_map).float().to(self.device)
+        obs = self.net_map[:, :2, :, :]
+        obs = torch.from_numpy(obs).float().to(self.device)
         with torch.no_grad():
             _, action, _, _ = self.actor_critic.act(
                 obs, self.recurrent_hidden_states,
@@ -1146,19 +1147,19 @@ if __name__ == "__main__":
     args = parser.parse_args()
     dd = args.dd
     dd = int(dd)
-    port = 30014 + dd
+    port = 5075 + dd
     docker_id = create_tdw(port=port)
-    c = Nav(port=port, launch_build=False, demo=False, train=2)
+    c = Nav(port=port, launch_build=False, demo=False, train=3)
     try:
         total_grasp = 0
         total_finish = 0
         total = 0
         rate_grasp = 0
         rate_finish = 0        
-        fff = open(f'trans_semantic_5{dd}.log', 'w', 10)
-        for i in range(dd * args.step, dd * args.step + args.step):
+        fff = open(f'trans_active_2{dd}.log', 'w', 10)
+        for i in range(196, dd * args.step + args.step):
             
-            c.run(output_dir=f'trans_semantic_5{dd}', data_id = i)
+            c.run(output_dir=f'trans_active_2{dd}', data_id = i)
             total_grasp += c.total_target_object - c.target_object_held.sum()
             total_finish += c.total_target_object - c.target_object_list.sum()
             total += c.total_target_object

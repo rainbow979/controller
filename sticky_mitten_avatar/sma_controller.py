@@ -189,9 +189,10 @@ class StickyMittenAvatarController(FloorplanController):
             self.data_path = resource_filename(__name__, "train_dataset.pkl")
         elif train == 1:
             self.data_path = resource_filename(__name__, "test_dataset.pkl")
-        else:
+        elif train == 2:
             self.data_path = resource_filename(__name__, "generate_dataset.pkl")
-        
+        else:
+            self.data_path = resource_filename(__name__, "extra.pkl")
         with open(self.data_path, 'rb') as f:
             self.dataset = pickle.load(f)
         self.dataset_n = len(self.dataset)
