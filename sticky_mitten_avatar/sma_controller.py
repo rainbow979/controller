@@ -305,6 +305,8 @@ class StickyMittenAvatarController(FloorplanController):
         self._audio_values: Dict[int, ObjectInfo] = dict()
         self.static_object_info: Dict[int, StaticObjectInfo] = dict()
         self.segmentation_color_to_id: Dict[int, int] = dict()
+        self.demo_object_to_id = {}
+        self.demo_id_to_object = {}
         self._cam_commands: Optional[list] = None
         
         #dataset
@@ -378,10 +380,13 @@ class StickyMittenAvatarController(FloorplanController):
             self.static_object_info[static_object.object_id] = static_object
 
         # Fill the segmentation color dictionary and carve into the NavMesh.
+        demo_id = 0
         for object_id in self.static_object_info:
             hashable_color = TDWUtils.color_to_hashable(self.static_object_info[object_id].segmentation_color)
             self.segmentation_color_to_id[hashable_color] = object_id
-
+            self.demo_object_to_id[object_id] = demo_id
+            self.demo_id_to_object[demo_id] = object_id
+            demo_id += 1
         self._end_task()
 
     def _end_task(self, enable_sensor: bool = True) -> None:
@@ -1364,8 +1369,8 @@ class StickyMittenAvatarController(FloorplanController):
                 ix, iy = c['ixy']
                 x, z = self.get_occupancy_position(ix, iy)
                 container_name = c['name']
-                #SCALE = {"x": 0.4, "y": 0.4, "z": 0.4}
-                SCALE = CONTAINER_SCALE
+                SCALE = {"x": 0.4, "y": 0.4, "z": 0.4}
+                #SCALE = CONTAINER_SCALE
                 container_id, container_commands = self._add_object(position=c['position'],
                                                                     rotation=c['rotation'],
                                                                     scale=SCALE,
