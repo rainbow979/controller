@@ -20,10 +20,6 @@ import argparse
 import random
 
 import gym
-import torch
-from torch import nn
-
-from a2c_ppo_acktr.model import Policy
 
 DISTANCE = 0.5
 ANGLE = 15.
@@ -339,7 +335,9 @@ class Nav(StickyMittenAvatarController):
                                     arm=arm,
                                     check_if_possible=True,
                                     stop_on_mitten_collision=True)
-            self.action_list.append([4, object_id])
+            self.action_list.append([4,
+                                    self.demo_object_to_id[object_id],
+                                    arm==Arm.right])
             #print('grasp time:', time.time() - start)
             #print('grasp:', status)
             if status == TaskStatus.success and \
@@ -349,12 +347,13 @@ class Nav(StickyMittenAvatarController):
                 break
             # Turn a bit and try again.
             if not grasped:
-                self.turn_by(d_theta)
+                #self.turn_by(d_theta)
+                self.turn_by(angle=d_theta, force=1000, num_attempts=25)
                 self.step += 1
                 if d_theta == 15:
-                    self.action_list.append([1])
-                else:
                     self.action_list.append([2])
+                else:
+                    self.action_list.append([1])
                 theta += abs(d_theta)
             #print('theta:', theta)
         return grasped
@@ -379,9 +378,9 @@ class Nav(StickyMittenAvatarController):
             pre_map = self.dep2map()
             self.map = np.maximum(self.map, pre_map)
             
-            self.update_map()
+            #self.update_map()
             
-            path = self.find_shortest_path(self.position, self.goal, self.map)
+            path = self.find_shortest_path(self.position, self.goal, self.gt_map)
             gi, gj = path[min(2, len(path) - 1)]
             x, z = self.get_occupancy_position(gi, gj)
             #assert T == True
@@ -411,34 +410,34 @@ class Nav(StickyMittenAvatarController):
                 #    _, i, j, _ = self.check_occupied(x, z)
                 #    self.gt_map[i, j] = 1
             elif angle > 0:
-                status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=30)
+                status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=25)
                 action = 1
                 self.action_list.append([1])
                 if status == TaskStatus.too_long:
-                    self.turn_by(angle=ANGLE, force = 1000, num_attempts=15)
+                    self.turn_by(angle=ANGLE, force = 1000, num_attempts=25)
                     self.move_forward_by(distance=DISTANCE,
                                         move_force = 300,
                                         move_stopping_threshold=0.2,
                                         num_attempts = 25)   
                     self.step += 2
-                    #move_step += 1
+                    move_step += 1
                     x, y, z = self.frame.avatar_transform.position
                     _, i, j, _ = self.check_occupied(x, z)
                     self.traj.append((i, j))
                     self.action_list.append([2])
                     self.action_list.append([0])
             else:
-                status = self.turn_by(angle=ANGLE, force=1000, num_attempts=30)
+                status = self.turn_by(angle=ANGLE, force=1000, num_attempts=25)
                 action = 2
                 self.action_list.append([2])
                 if status == TaskStatus.too_long:
-                    self.turn_by(angle=-ANGLE, force = 1000, num_attempts=15)
+                    self.turn_by(angle=-ANGLE, force = 1000, num_attempts=25)
                     self.move_forward_by(distance=DISTANCE,
                                         move_force = 300,
                                         move_stopping_threshold=0.2,
                                         num_attempts = 25)   
                     self.step += 2   
-                    #move_step += 1
+                    move_step += 1
                     x, y, z = self.frame.avatar_transform.position
                     _, i, j, _ = self.check_occupied(x, z)
                     self.traj.append((i, j))
@@ -469,7 +468,10 @@ class Nav(StickyMittenAvatarController):
         return self.check_goal(d)
     
     def my_put_in_container(self, object_id, container_id, arm):
-        self.action_list.append([5, object_id, container_id, arm == Arm.right])
+        self.action_list.append([5,
+                                self.demo_object_to_id[object_id],
+                                self.demo_object_to_id[container_id],
+                                arm == Arm.right])
         #print('before position:', self.frame.object_transforms[object_id].position)
         try:
             self._start_task()
@@ -534,10 +536,14 @@ class Nav(StickyMittenAvatarController):
         self.step += 1
         if self.sub_goal < 2:
             self.go_to(object_id, move_stopping_threshold=0.3)
-            self.action_list.append([3, object_id, 0.3])
+            self.action_list.append([3,
+                                    self.demo_object_to_id[object_id],
+                                    0.3])
         else:
             self.go_to(object_id, move_stopping_threshold=0.6)
-            self.action_list.append([3, object_id, 0.6])
+            self.action_list.append([3,
+                                    self.demo_object_to_id[object_id],
+                                    0.6])
         d = np.linalg.norm(self.frame.avatar_transform.position - self.frame.object_transforms[object_id].position)
         if d > 0.7 and self.sub_goal < 2:
             #print('d1:', d)
@@ -598,7 +604,10 @@ class Nav(StickyMittenAvatarController):
                     self.net_map[0, 2, i, j] = 0
                 self.update_held(object_id)
         else:
-            Flag = True            
+            Flag = True   
+            self.held_objects = []
+            self.held_objects.extend(self.frame.held_objects[Arm.left])
+            self.held_objects.extend(self.frame.held_objects[Arm.right])            
             for id in self.held_objects:
                 if self.is_container(id):
                     self.finish[id] = 1
@@ -654,7 +663,7 @@ class Nav(StickyMittenAvatarController):
                 return
             action_time = time.time()
             if EXPLORED_POLICY != 1:
-                path = self.find_shortest_path(self.position, self.goal, self.map)
+                path = self.find_shortest_path(self.position, self.goal, self.gt_map)
                 i, j = path[min(2, len(path) - 1)]
                 x, z = self.get_occupancy_position(i, j)
                 #assert T == True
@@ -673,7 +682,7 @@ class Nav(StickyMittenAvatarController):
                     x, y, z = self.frame.avatar_transform.position
                     _, i, j, _ = self.check_occupied(x, z)
                     self.traj.append((i, j))
-                    self.action_list.append(0)
+                    self.action_list.append([0])
                     action = 0
                     if self.l2_distance((px, pz), (x, z)) < 0.1:
                         x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
@@ -686,9 +695,9 @@ class Nav(StickyMittenAvatarController):
                 elif angle > 0:
                     status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=25)
                     action = 1
-                    self.action_list.append(1)
+                    self.action_list.append([1])
                     if status == TaskStatus.too_long:
-                        self.turn_by(angle=ANGLE, force = 1000, num_attempts=15)
+                        self.turn_by(angle=ANGLE, force = 1000, num_attempts=25)
                         self.move_forward_by(distance=DISTANCE,
                                             move_force = 300,
                                             move_stopping_threshold=0.2,
@@ -698,14 +707,14 @@ class Nav(StickyMittenAvatarController):
                         x, y, z = self.frame.avatar_transform.position
                         _, i, j, _ = self.check_occupied(x, z)
                         self.traj.append((i, j))
-                        self.action_list.append(2)
-                        self.action_list.append(0)
+                        self.action_list.append([2])
+                        self.action_list.append([0])
                 else:
                     status = self.turn_by(angle=ANGLE, force=1000, num_attempts=25)
                     action = 2
-                    self.action_list.append(2)
+                    self.action_list.append([2])
                     if status == TaskStatus.too_long:
-                        self.turn_by(angle=-ANGLE, force = 1000, num_attempts=15)
+                        self.turn_by(angle=-ANGLE, force = 1000, num_attempts=25)
                         self.move_forward_by(distance=DISTANCE,
                                             move_force = 300,
                                             move_stopping_threshold=0.2,
@@ -715,8 +724,8 @@ class Nav(StickyMittenAvatarController):
                         x, y, z = self.frame.avatar_transform.position
                         _, i, j, _ = self.check_occupied(x, z)
                         self.traj.append((i, j))
-                        self.action_list.append(1)
-                        self.action_list.append(0)
+                        self.action_list.append([1])
+                        self.action_list.append([0])
             else:
                 with torch.no_grad():
                     value, action, action_log_prob, self.recurrent_hidden_states = self.actor_critic.act(
@@ -732,9 +741,9 @@ class Nav(StickyMittenAvatarController):
                                         move_stopping_threshold=0.2,
                                         num_attempts = 25)       
                 elif action[0] == 1:
-                    status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=15)
+                    status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=25)
                 elif action[0] == 2:
-                    status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=15)
+                    status = self.turn_by(angle=-ANGLE, force=1000, num_attempts=25)
                 else:
                     assert False
                 if status != TaskStatus.success:
@@ -920,7 +929,7 @@ class Nav(StickyMittenAvatarController):
         self.paint = cv2.resize(self.paint, dsize=(0, 0), fx = 4, fy = 4)
         cv2.imwrite(f'./map{num}.jpg', self.paint)   
     
-    def construct_map(self):
+    '''def construct_map(self):
         
         self.net_size = (128, 48)
         
@@ -970,13 +979,10 @@ class Nav(StickyMittenAvatarController):
         self.device = torch.device("cuda:0")
         if EXPLORED_POLICY == 0:
             return
-        '''if EXPLORED_POLICY == 1:
-            observation_space = None
-            action_space = None'''
-        '''observation_space = gym.spaces.Box(0., 1.,
-                             (1,
-                              256,
-                              256), dtype=np.float32)'''
+        #observation_space = gym.spaces.Box(0., 1.,
+        #                     (1,
+        #                      256,
+        #                      256), dtype=np.float32)
         observation_space = gym.spaces.Box(0, 1,
                                 (6, 128, 48), dtype=np.int32)
         #action_space = gym.spaces.Discrete(3)
@@ -1006,7 +1012,7 @@ class Nav(StickyMittenAvatarController):
         action = nn.Sigmoid()(action)
         action = action.clamp(0.03, 0.99)
         self.goal = self.get_occupancy_position(float(action[0, 0] * 128), float(action[0, 1] * 48))
-        
+        '''
         
     def run(self, scene='2a', layout=1, output_dir='transport', data_id = 0) -> None:
         """
@@ -1028,7 +1034,7 @@ class Nav(StickyMittenAvatarController):
         
         if DEMO:
             self.communicate([{"$type": "set_floorplan_roof", "show": False}])
-            self.add_overhead_camera({"x": 0.8, "y": 6.0, "z": -1.3}, target_object="a", images="cam")        
+            self.add_overhead_camera({"x": 0.8, "y": 8.0, "z": -1.3}, target_object="a", images="all")        
         
         #return None
         #map: 0: free, 1: occupied
@@ -1036,7 +1042,7 @@ class Nav(StickyMittenAvatarController):
         self.gt_map = np.zeros_like(self.occupancy_map)
         self.gt_map[self.occupancy_map != 1] = 1
         
-        self.construct_policy()
+        #self.construct_policy()
         #self.W = 128
         #self.H = 48        
         if EXPLORED_POLICY == 0:
@@ -1071,7 +1077,7 @@ class Nav(StickyMittenAvatarController):
             self.id_map = np.zeros((128, 48), np.int32)
         self.map_shape = (self.W, self.H)
         
-        self.construct_map()
+        #self.construct_map()
         x, y, z = self.frame.avatar_transform.position
         self.position = self.frame.avatar_transform.position
         #print('init position:', x, y, z)
@@ -1187,7 +1193,8 @@ class Nav(StickyMittenAvatarController):
 
 
 if __name__ == "__main__":    
-    port = 18015
+    port = 18025
+    dd = 7
     docker_id = create_tdw(port=port)
     c = Nav(port=port, launch_build=False, demo=False, train=2)
     fff = open(f'trans_ran_f{dd}.log', 'w', 10)
@@ -1198,7 +1205,7 @@ if __name__ == "__main__":
         rate_grasp = 0
         rate_finish = 0                
         #for i in range(dd * args.step, dd * args.step + args.step):
-        i = 7
+        i = 44
         print(i)
         c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
         total_grasp += c.total_target_object - c.target_object_held.sum()
