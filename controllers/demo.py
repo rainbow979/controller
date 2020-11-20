@@ -19,7 +19,6 @@ import argparse
 
 import random
 
-import gym
 
 DISTANCE = 0.5
 ANGLE = 15.
@@ -33,7 +32,7 @@ import os
 
 EXPLORED_POLICY = 0
 
-DEMO = False
+DEMO = True
 
 
 #0: move forward
@@ -65,7 +64,8 @@ class Nav(StickyMittenAvatarController):
         self.map_id = 0
         self.surface_object_categories = \
                 loads(SURFACE_OBJECT_CATEGORIES_PATH.read_text(encoding="utf-8"))
-        
+        self.output_directory = "nav_images"
+        self.image_count = 0
         
     def save_infomation(self, output_directory='.'):
         frame_count = self.frame._frame_count
@@ -249,6 +249,8 @@ class Nav(StickyMittenAvatarController):
     def get_object_list(self):
         #seg = self.frame.id_pass
         images = self.frame.get_pil_images()
+        if self.step < 5:
+            self.frame.save_images('./demo/')
         seg = np.array(images['id'], np.int32)
         #hash = TDWUtils.color_to_hashable(seg)
         #print(seg.shape)
@@ -404,7 +406,7 @@ class Nav(StickyMittenAvatarController):
                 if self.l2_distance((px, pz), (x, z)) < 0.1:
                     x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
                     _, i, j, _ = self.check_occupied(x, z)
-                    self.map[i, j] = 1
+                    self.gt_map[i, j] = 1
                 #if status == TaskStatus.too_long or status == TaskStatus.collided_with_environment:
                 #    x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
                 #    _, i, j, _ = self.check_occupied(x, z)
@@ -687,7 +689,7 @@ class Nav(StickyMittenAvatarController):
                     if self.l2_distance((px, pz), (x, z)) < 0.1:
                         x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
                         _, i, j, _ = self.check_occupied(x, z)
-                        self.map[i, j] = 1
+                        self.gt_map[i, j] = 1
                     #if status == TaskStatus.too_long or status == TaskStatus.collided_with_environment:
                     #    x, y, z = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * 0.25)
                     #    _, i, j, _ = self.check_occupied(x, z)
@@ -727,7 +729,8 @@ class Nav(StickyMittenAvatarController):
                         self.action_list.append([1])
                         self.action_list.append([0])
             else:
-                with torch.no_grad():
+                pass
+                '''with torch.no_grad():
                     value, action, action_log_prob, self.recurrent_hidden_states = self.actor_critic.act(
                         self._obs(), self.recurrent_hidden_states,
                         self.masks, self.vector, deterministic=False)
@@ -749,7 +752,7 @@ class Nav(StickyMittenAvatarController):
                 if status != TaskStatus.success:
                     self.pre_action = action[0]
                 else:
-                    self.pre_action = -1
+                    self.pre_action = -1'''
             
             #self.action_list.append(action)    
             action_time = time.time() - action_time
@@ -1034,8 +1037,16 @@ class Nav(StickyMittenAvatarController):
         
         if DEMO:
             self.communicate([{"$type": "set_floorplan_roof", "show": False}])
-            self.add_overhead_camera({"x": 0.8, "y": 8.0, "z": -1.3}, target_object="a", images="all")        
-        
+            self.add_overhead_camera({"x": 0.8, "y": 8.0, "z": -1.3},
+                                        target_object="a",
+                                        images="all")
+            #self.add_overhead_camera({"x": -5.5, "y": 8.0, "z": 1.0},
+            #                            target_object="a",
+            #                            images="avatars")
+            #self._cam_commands.extend([{"$type": "send_images",
+            #                            "frequency": "once"}])
+            self._end_task()
+            self.frame.save_images('./demo')
         #return None
         #map: 0: free, 1: occupied
         #occupancy map: 0: occupied; 1: free; 2: out-side
@@ -1196,7 +1207,7 @@ if __name__ == "__main__":
     port = 18025
     dd = 7
     docker_id = create_tdw(port=port)
-    c = Nav(port=port, launch_build=False, demo=False, train=2)
+    c = Nav(port=port, launch_build=False, demo=True, train=2)
     fff = open(f'trans_ran_f{dd}.log', 'w', 10)
     try:
         total_grasp = 0
@@ -1205,7 +1216,7 @@ if __name__ == "__main__":
         rate_grasp = 0
         rate_finish = 0                
         #for i in range(dd * args.step, dd * args.step + args.step):
-        i = 44
+        i = 184 #187, 188, 82, 87, 95, 28, 30
         print(i)
         c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
         total_grasp += c.total_target_object - c.target_object_held.sum()
