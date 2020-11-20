@@ -1170,10 +1170,10 @@ class StickyMittenAvatarController(FloorplanController):
                                        "object_id": target_object,
                                        "avatar_id": cam_id,
                                        "use_centroid": True}]
-        self._cam_commands.append({"$type": "enable_image_sensor",
+        '''self._cam_commands.append({"$type": "enable_image_sensor",
                                    "enable": False,
                                    "sensor_name": "SensorContainer",
-                                   "avatar_id": self._avatar.id})
+                                   "avatar_id": self._avatar.id})'''
         if images != "avatars":
             commands.append({"$type": "set_pass_masks",
                              "pass_masks": ["_img"],

@@ -148,6 +148,9 @@ class FrameData:
         for i in range(0, len(resp) - 1):
             if OutputData.get_data_type_id(resp[i]) == "imag":
                 images = Images(resp[i])
+                #print(images.get_avatar_id(), images.get_num_passes())
+                if images.get_avatar_id() != avatar.id:
+                    continue
                 for j in range(images.get_num_passes()):
                     if images.get_pass_mask(j) == "_id":
                         self.id_pass = images.get_image(j)

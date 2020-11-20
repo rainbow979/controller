@@ -249,8 +249,8 @@ class Nav(StickyMittenAvatarController):
     def get_object_list(self):
         #seg = self.frame.id_pass
         images = self.frame.get_pil_images()
-        if self.step < 5:
-            self.frame.save_images('./demo/')
+        #if self.step < 5:
+        #    self.frame.save_images('./demo/')
         seg = np.array(images['id'], np.int32)
         #hash = TDWUtils.color_to_hashable(seg)
         #print(seg.shape)
@@ -781,7 +781,7 @@ class Nav(StickyMittenAvatarController):
 
         :param arm: The arm.
         """
-        return
+        #return
         self.step += 1
         start = time.time()
         if lift_high:
