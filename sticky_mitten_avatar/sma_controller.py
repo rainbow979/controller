@@ -648,7 +648,7 @@ class StickyMittenAvatarController(FloorplanController):
 
         done = False
         step = 0
-        while not done and step < 60:
+        while not done and step < 250:
             done = True
             step += 1
             # The loop is done if the IK goals are done.
@@ -997,9 +997,9 @@ class StickyMittenAvatarController(FloorplanController):
 
         # A "full" container has too many objects such that physics might glitch.
         overlap_ids = self._get_objects_in_container(container_id=container_id)
-        if len(overlap_ids) > 3:
+        '''if len(overlap_ids) > 3:
             self._end_task()
-            return TaskStatus.full_container
+            return TaskStatus.full_container'''
 
         # Grasp the object.
         if object_id not in self.frame.held_objects[arm]:
@@ -1079,7 +1079,14 @@ class StickyMittenAvatarController(FloorplanController):
         self.communicate({"$type": "add_fixed_joint",
                           "id": object_id,
                           "parent_id": container_id})
-
+        '''position = {'x': float(20 + random.randint(0, 10)), 
+                    'y': float(0.),
+                    'z': float(20 + random.randint(0, 10))}
+            
+        self.communicate([{"$type": "teleport_object",
+               "position": position,
+               "id": object_id,
+               "physics": True}])'''
         self.reset_arm(arm=container_arm)
 
         # Move the container and its objects in front of the mitten.
@@ -1369,7 +1376,7 @@ class StickyMittenAvatarController(FloorplanController):
                 ix, iy = c['ixy']
                 x, z = self.get_occupancy_position(ix, iy)
                 container_name = c['name']
-                SCALE = {"x": 0.4, "y": 0.4, "z": 0.4}
+                SCALE = {"x": 0.5, "y": 0.4, "z": 0.5}
                 #SCALE = CONTAINER_SCALE
                 container_id, container_commands = self._add_object(position=c['position'],
                                                                     rotation=c['rotation'],

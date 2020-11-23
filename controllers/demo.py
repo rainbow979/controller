@@ -60,7 +60,7 @@ class Nav(StickyMittenAvatarController):
         super().__init__(port=port, launch_build=launch_build, \
                 id_pass=True, demo=DEMO, train=train)
         self.demo = demo
-        self.max_steps = 1000
+        self.max_steps = 600
         self.map_id = 0
         self.surface_object_categories = \
                 loads(SURFACE_OBJECT_CATEGORIES_PATH.read_text(encoding="utf-8"))
@@ -493,6 +493,8 @@ class Nav(StickyMittenAvatarController):
         return True
     
     def interact(self, object_id):
+        if object_id in self.finish:
+            return
         print('begin interact:', self.sub_goal)
         object_id = int(object_id)
         #self.frame.save_images(self.output_dir + f'/self.sub_goal')
@@ -542,7 +544,7 @@ class Nav(StickyMittenAvatarController):
                                     self.demo_object_to_id[object_id],
                                     0.3])
         else:
-            self.go_to(object_id, move_stopping_threshold=0.6)
+            self.go_to(object_id, move_stopping_threshold=1.2)
             self.action_list.append([3,
                                     self.demo_object_to_id[object_id],
                                     0.6])
@@ -584,19 +586,49 @@ class Nav(StickyMittenAvatarController):
                 self.content_container[object_id] = []
                 for a in holding_arms:
                     for o in self.frame.held_objects[a]:
-                        print('put_in_container:', a, o)
-                        self.my_put_in_container(object_id=o,
+                        start = time.time()
+                        '''self.my_put_in_container(object_id=o,
                                                 container_id = object_id,
-                                                arm=a)
+                                                arm=a)'''   
+                        if not self.container_full(self.container_held):
+                            if a == Arm.left:
+                                ac = Arm.right
+                            else:
+                                ac = Arm.left
+                            self.reset_arm(ac)
+                            status = self.put_in_container(object_id = o,
+                                                    container_id = object_id,
+                                                    arm=a)                            
+                            print('put_in_container:', status, time.time() - start)
+                            if status != TaskStatus.success:
+                                
+                                print(self.grasp(object_id, ac))
                         self.content_container[object_id].append(o)
             if self.container_held is not None:
                 #print('???')
                 start = time.time()
                 #print('before:', self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])
-                status = self.my_put_in_container(object_id=object_id,
+                '''status = self.my_put_in_container(object_id=object_id,
+                                                container_id = self.container_held,
+                                                arm=arm)'''
+                if not self.container_full(self.container_held):
+                    if arm == Arm.left:
+                        ac = Arm.right
+                    else:
+                        ac = Arm.left
+                    self.reset_arm(ac)
+                    status = self.put_in_container(object_id = object_id,
                                                 container_id = self.container_held,
                                                 arm=arm)
-                #print('put_in_container:', status, time.time() - start)
+                    print('put_in_container:', status, time.time() - start)
+                    if status != TaskStatus.success:
+                        if arm == Arm.left:
+                            ac = Arm.right
+                        else:
+                            ac = Arm.left
+                        print(self.grasp(self.container_held, ac))
+                #print('put_in_container:', status)
+                    
                 #print('position:', self.frame.object_transforms[object_id].position)
                 #print('after:', self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])                
                 #print('!!!')
@@ -790,53 +822,11 @@ class Nav(StickyMittenAvatarController):
             y = 0.4
         status = self.reach_for_target(arm=arm,
                               target={"x": -0.2 if arm == Arm.left else 0.2, "y": y, "z": 0.3},
-                              check_if_possible=True,
+                              check_if_possible=False,
                               stop_on_mitten_collision=True)
         #print('lift time:', status, time.time() - start)
             
-    def draw_map(self):
-        self.map_num += 1
-        if len(self.traj) == 0:
-            return
-        self.map_num += 1
-        W, H = self.map.shape
-        self.paint = np.zeros((W, H, 3))
-        self.paint.fill(100)
-        self.paint[self.map == 0, 0:3] = 255
-        k_f = max(255 / len(self.traj), 2.5)
-        for i in range(len(self.traj)):
-            self.draw(self.traj[i], [i * k_f, 255, 255 - i * k_f])
-        _, i, j, _ = self.check_occupied(self.goal[0], self.goal[1])
-        self.draw((i, j), [255, 0, 255])
-        
-        '''print('len:', len(self.static_object_info))
-        for i in range(self.n):
-            x, y, z = self.get_object_position(self.goal_idx[i])
-            _, i, j, _ = self.check_occupied(x, z)
-            self.draw((i, j), [120, 0, 120])'''
-        H, W, _ = self.paint.shape
-        self.paint = cv2.resize(self.paint, dsize=(0, 0), fx = 4, fy = 4)
-        cv2.imwrite(f'./{self.output_dir}/map{self.map_num}.jpg', self.paint)   
     
-    
-    def draw_Astar_map(self):
-        W, H = self.map.shape
-        self.paint = np.zeros((W, H, 3))
-        self.paint.fill(100)
-        self.paint[self.gt_map == 0, 0:3] = 255
-        
-        self.position = self.frame.avatar_transform.position
-        path = self.find_shortest_path(self.position, self.goal, self.gt_map)
-        
-        k_f = max(255 / len(path), 2.5)
-        for t in range(len(path)):
-            self.draw(path[t], [t * k_f, 255, 255 - t * k_f])            
-        _, i, j, _ = self.check_occupied(self.goal[0], self.goal[1])
-        self.draw((i, j), [255, 0, 255])
-        H, W, _ = self.paint.shape
-        self.paint = cv2.resize(self.paint, dsize=(0, 0), fx = 4, fy = 4)
-        cv2.imwrite(f'./{self.output_dir}/A_map{self.map_num}.jpg', self.paint)   
-        
     
     def is_container(self, id):
         return self.static_object_info[id].container
@@ -855,7 +845,7 @@ class Nav(StickyMittenAvatarController):
         self.held_objects.extend(self.frame.held_objects[Arm.left])
         self.held_objects.extend(self.frame.held_objects[Arm.right])
         if self.target_object_held.sum() == 0 or \
-                (self.step > self.max_steps - 250 and len(self.held_objects) > 0):
+                (self.step > self.max_steps - 130 and len(self.held_objects) > 0):
             #all objects are found
             self.sub_goal = 2
         #elif self.step > self.max_steps - 50 and len(self.held_objects) > 0
@@ -906,31 +896,7 @@ class Nav(StickyMittenAvatarController):
         self.target_object_held[self.target_object_dict[name]] -= 1 
     
     
-    def draw_init_map(self, num):
-        W, H = self.occupancy_map.shape
-        self.paint = np.zeros((W, H, 3))
-        self.paint.fill(100)
-        self.paint[self.occupancy_map == 1, 0:3] = 255
-        for id in self.static_object_info:
-            if self.static_object_info[id].container:
-                #print('container:', self.static_object_info[id].model_name)
-                x, y, z = self.frame.object_transforms[id].position
-                _, i, j, _ = self.check_occupied(x, z)
-                self.paint[i, j] = np.array([220,20,60])    #red
-            name = self.static_object_info[id].model_name
-            if name in self.surface_object_categories and \
-                self.surface_object_categories[name] == self.goal_object:
-                #print(name, self.goal_object)
-                x, y, z = self.frame.object_transforms[id].position
-                _, i, j, _ = self.check_occupied(x, z)
-                self.paint[i, j] = np.array([0,255,0])    #green
-        for id in self._target_object_ids:
-            x, y, z = self.frame.object_transforms[id].position
-            _, i, j, _ = self.check_occupied(x, z)
-            self.paint[i, j] = np.array([0, 0, 255])    #blue
-        
-        self.paint = cv2.resize(self.paint, dsize=(0, 0), fx = 4, fy = 4)
-        cv2.imwrite(f'./map{num}.jpg', self.paint)   
+    
     
     '''def construct_map(self):
         
@@ -1037,7 +1003,7 @@ class Nav(StickyMittenAvatarController):
         
         if DEMO:
             self.communicate([{"$type": "set_floorplan_roof", "show": False}])
-            self.add_overhead_camera({"x": 0.8, "y": 8.0, "z": -1.3},
+            self.add_overhead_camera({"x": 0.8, "y": 6.0, "z": -1.3},
                                         target_object="a",
                                         images="all")
             #self.add_overhead_camera({"x": -5.5, "y": 8.0, "z": 1.0},
@@ -1216,7 +1182,7 @@ if __name__ == "__main__":
         rate_grasp = 0
         rate_finish = 0                
         #for i in range(dd * args.step, dd * args.step + args.step):
-        i = 184 #187, 188, 82, 87, 95, 28, 30
+        i = 188#184 #187, 188, 82, 87, 95, 167
         print(i)
         c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
         total_grasp += c.total_target_object - c.target_object_held.sum()
