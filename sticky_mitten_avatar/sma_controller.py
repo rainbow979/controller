@@ -1076,17 +1076,17 @@ class StickyMittenAvatarController(FloorplanController):
             return TaskStatus.not_in_container
 
         # Connect the object to the container.
-        self.communicate({"$type": "add_fixed_joint",
+        '''self.communicate({"$type": "add_fixed_joint",
                           "id": object_id,
-                          "parent_id": container_id})
-        '''position = {'x': float(20 + random.randint(0, 10)), 
+                          "parent_id": container_id})'''
+        position = {'x': float(20 + random.randint(0, 10)), 
                     'y': float(0.),
                     'z': float(20 + random.randint(0, 10))}
             
         self.communicate([{"$type": "teleport_object",
                "position": position,
                "id": object_id,
-               "physics": True}])'''
+               "physics": True}])
         self.reset_arm(arm=container_arm)
 
         # Move the container and its objects in front of the mitten.

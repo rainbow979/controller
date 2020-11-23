@@ -601,7 +601,6 @@ class Nav(StickyMittenAvatarController):
                                                     arm=a)                            
                             print('put_in_container:', status, time.time() - start)
                             if status != TaskStatus.success:
-                                
                                 print(self.grasp(object_id, ac))
                         self.content_container[object_id].append(o)
             if self.container_held is not None:
@@ -626,13 +625,15 @@ class Nav(StickyMittenAvatarController):
                             ac = Arm.right
                         else:
                             ac = Arm.left
+                        
+
                         print(self.grasp(self.container_held, ac))
                 #print('put_in_container:', status)
                     
                 #print('position:', self.frame.object_transforms[object_id].position)
                 #print('after:', self.frame.held_objects[Arm.left], self.frame.held_objects[Arm.right])                
                 #print('!!!')
-                self.content_container[self.container_held].append(object_id)
+                    self.content_container[self.container_held].append(object_id)
             if self.static_object_info[object_id].target_object:
                 if EXPLORED_POLICY > 0:
                     self.net_map[0, 2, i, j] = 0
@@ -657,6 +658,7 @@ class Nav(StickyMittenAvatarController):
             for a in holding_arms:
                 self.drop(a)
                 self.action_list.append([6, a == Arm.right])
+            self.container_held = None
         return Flag
     
     def nav(self, max_nav_step):
@@ -1182,7 +1184,7 @@ if __name__ == "__main__":
         rate_grasp = 0
         rate_finish = 0                
         #for i in range(dd * args.step, dd * args.step + args.step):
-        i = 188#184 #187, 188, 82, 87, 95, 167
+        i = 43#184 #187, 188, 82, 87, 95, 167
         print(i)
         c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
         total_grasp += c.total_target_object - c.target_object_held.sum()
