@@ -1364,7 +1364,8 @@ class StickyMittenAvatarController(FloorplanController):
                 ix, iy = c['ixy']
                 x, z = self.get_occupancy_position(ix, iy)
                 container_name = c['name']
-                SCALE = {"x": 0.4, "y": 0.4, "z": 0.4}
+                #SCALE = {"x": 0.4, "y": 0.4, "z": 0.4}
+                SCALE = CONTAINER_SCALE
                 container_id, container_commands = self._add_object(position=c['position'],
                                                                     rotation=c['rotation'],
                                                                     scale=CONTAINER_SCALE,
