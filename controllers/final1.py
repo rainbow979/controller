@@ -1172,23 +1172,23 @@ if __name__ == "__main__":
         total = 0
         rate_grasp = 0
         rate_finish = 0                
-        for i in range(dd * args.step, dd * args.step + args.step):
-            
-            c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
-            total_grasp += c.total_target_object - c.target_object_held.sum()
-            total_finish += c.total_target_object - c.target_object_list.sum()
-            total += c.total_target_object
-            rate_grasp += 1 - c.target_object_held.sum() / c.total_target_object
-            rate_finish += 1 - c.target_object_list.sum() / c.total_target_object
-            print('epoch ', i)
-            print('grasp:', c.total_target_object - c.target_object_held.sum())
-            print('finish:', c.total_target_object - c.target_object_list.sum())
-            print('total:', c.total_target_object)
-            fff.write(f'epoch {i}:')
-            fff.write(f'grasp: {c.total_target_object - c.target_object_held.sum()}')
-            fff.write(f'finish: {c.total_target_object - c.target_object_list.sum()}')
-            fff.write(f'total: {c.total_target_object}\n')
-            fff.flush()
+        #for i in range(dd * args.step, dd * args.step + args.step):
+        i = 7
+        c.run(output_dir=f'trans_ran_f{dd}', data_id = i)
+        total_grasp += c.total_target_object - c.target_object_held.sum()
+        total_finish += c.total_target_object - c.target_object_list.sum()
+        total += c.total_target_object
+        rate_grasp += 1 - c.target_object_held.sum() / c.total_target_object
+        rate_finish += 1 - c.target_object_list.sum() / c.total_target_object
+        print('epoch ', i)
+        print('grasp:', c.total_target_object - c.target_object_held.sum())
+        print('finish:', c.total_target_object - c.target_object_list.sum())
+        print('total:', c.total_target_object)
+        fff.write(f'epoch {i}:')
+        fff.write(f'grasp: {c.total_target_object - c.target_object_held.sum()}')
+        fff.write(f'finish: {c.total_target_object - c.target_object_list.sum()}')
+        fff.write(f'total: {c.total_target_object}\n')
+        fff.flush()
         fff.write(f'{total_grasp}, {total_finish}, {rate_grasp}, {rate_finish}\n')
         fff.write(f'{rate_grasp / 200}, {rate_finish / 200}')
         print(total_grasp, total_finish, total, rate_grasp, rate_finish)
