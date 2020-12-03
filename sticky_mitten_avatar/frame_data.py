@@ -4,7 +4,7 @@ from pathlib import Path
 import numpy as np
 from typing import List, Dict, Optional, Union
 from tdw.controller import Controller
-from tdw.output_data import OutputData, Rigidbodies, Images, Transforms, CameraMatrices
+from tdw.output_data import OutputData, Images, Transforms, CameraMatrices
 from tdw.tdw_utils import TDWUtils
 from sticky_mitten_avatar.avatars.avatar import Avatar
 from sticky_mitten_avatar.util import get_data
@@ -61,6 +61,11 @@ class FrameData:
     - `object_transforms` The dictionary of object [transform data](transform.md). Key = the object ID.
 
     ```python
+    from sticky_mitten_avatar import StickyMittenAvatarController
+
+    c = StickyMittenAvatarController()
+    c.init_scene(scene="2a", layout=1)
+
     for object_id in c.frame.object_transforms:
         print(c.frame.object_transforms[object_id].position)
     ```
@@ -70,16 +75,26 @@ class FrameData:
     - `avatar_transform` The [transform data](transform.md) of the avatar.
 
     ```python
+    from sticky_mitten_avatar import StickyMittenAvatarController
+
+    c = StickyMittenAvatarController()
+    c.init_scene(scene="2a", layout=1)
+
     avatar_position = c.frame.avatar_transform.position
     ```
 
     - `avatar_body_part_transforms` The [transform data](transform.md) of each body part of the avatar. Key = body part ID.
 
     ```python
+    from sticky_mitten_avatar import StickyMittenAvatarController
+
+    c = StickyMittenAvatarController()
+    c.init_scene(scene="2a", layout=1)
+
     # Get the position and segmentation color of each body part.
     for body_part_id in c.frame.avatar_body_part_transforms:
         position = c.frame.avatar_body_part_transforms[body_part_id]
-        segmentation_color = c.static_avatar_data[body_part_id]
+        segmentation_color = c.static_avatar_info[body_part_id].segmentation_color
     ```
 
     - `held_objects` A dictionary of IDs of objects held in each mitten. Key = arm:
@@ -127,8 +142,11 @@ class FrameData:
 
         # Get camera matrix data.
         matrices = get_data(resp=resp, d_type=CameraMatrices)
-        self.projection_matrix = matrices.get_projection_matrix()
-        self.camera_matrix = matrices.get_camera_matrix()
+        self.projection_matrix: Optional[np.array] = None
+        self.camera_matrix: Optional[np.array] = None
+        if matrices is not None:
+            self.projection_matrix = matrices.get_projection_matrix()
+            self.camera_matrix = matrices.get_camera_matrix()
 
         # Get the transform data of the avatar.
         self.avatar_transform = Transform(position=np.array(avatar.frame.get_position()),
@@ -148,6 +166,9 @@ class FrameData:
         for i in range(0, len(resp) - 1):
             if OutputData.get_data_type_id(resp[i]) == "imag":
                 images = Images(resp[i])
+                # Ignore images from the overhead camera.
+                if images.get_avatar_id() != avatar.id:
+                    continue
                 for j in range(images.get_num_passes()):
                     if images.get_pass_mask(j) == "_id":
                         self.id_pass = images.get_image(j)

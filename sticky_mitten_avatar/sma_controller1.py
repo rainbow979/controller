@@ -95,11 +95,6 @@ class StickyMittenAvatarController(FloorplanController):
     - `frame` Dynamic data for all of the most recent frame (i.e. the frame after doing an action such as `reach_for_target()`). [Read this](frame_data.md) for a full API.
 
     ```python
-    from sticky_mitten_avatar import StickyMittenAvatarController
-
-    c = StickyMittenAvatarController()
-    c.init_scene(scene="2a", layout=1)
-
     # Get the segmentation colors and depth map from the most recent frame.
     id_pass = c.frame.id_pass
     depth_pass = c.frame.depth_pass
@@ -109,26 +104,14 @@ class StickyMittenAvatarController(FloorplanController):
     - `static_object_info`: Static info for all objects in the scene. [Read this](static_object_info.md) for a full API.
 
     ```python
-    from sticky_mitten_avatar import StickyMittenAvatarController
-
-    c = StickyMittenAvatarController()
-    c.init_scene(scene="2a", layout=1)
-
-    # Print each object ID and segmentation color.
-    for object_id in c.static_object_info:
-        object_info = c.static_object_info[object_id]
-        print(object_id, object_info.segmentation_color)
+    # Get the segmentation color of an object.
+    segmentation_color = c.static_object_info[object_id].segmentation_color
     ```
 
     - `segmentation_color_to_id` A dictionary. Key = a hashable representation of the object's segmentation color.
       Value = The object ID. See `static_object_info` for a dictionary mapped to object ID with additional data.
 
     ```python
-    from sticky_mitten_avatar import StickyMittenAvatarController
-
-    c = StickyMittenAvatarController()
-    c.init_scene(scene="2a", layout=1)
-
     for hashable_color in c.segmentation_color_to_id:
         object_id = c.segmentation_color_to_id[hashable_color]
     ```
@@ -138,15 +121,11 @@ class StickyMittenAvatarController(FloorplanController):
     - `static_avatar_info` Static info for the avatar's body parts. [Read this](body_part_static.md) for a full API. Key = body part ID.
 
     ```python
-    from sticky_mitten_avatar import StickyMittenAvatarController
-
-    c = StickyMittenAvatarController()
-    c.init_scene(scene="2a", layout=1)
-
-    # Print each body part ID and segmentation color.
-    for body_part_id in c.static_avatar_info:
-        body_part = c.static_avatar_info[body_part_id]
-        print(body_part_id, body_part.segmentation_color)
+    for body_part_id in c.static_avatar_data:
+        body_part = c.static_avatar_data[body_part_id]
+        print(body_part.object_id) # The object ID of the body part (matches body_part_id).
+        print(body_part.color) # The segmentation color.
+        print(body_part.name) # The name of the body part.
     ```
 
     - `occupancy_map` A numpy array of positions in the scene and whether they are occupied.
@@ -158,15 +137,12 @@ class StickyMittenAvatarController(FloorplanController):
 
        This is _not_ a navigation map. If there is a gap between positions, the avatar might still be able to go from one to the other.
 
-       Images of each occupancy map can be found [here](https://github.com/alters-mit/sticky_mitten_avatar/tree/master/images/occupancy_maps). Key: Red = Free position. Blue = Free position where a target object or container can be placed.
-       The files are named `<scene>_<layout>` (the lettered variants of each scene are different only visually, so the occupancy maps of `scene 1a, layout 0`, `scene 1b, layout 0`, and `scene 1c, layout 0` are exactly the same, but the occupancy map of `scene 1a, layout 1` is different.
+       Images of each occupancy map can be found in: `images/occupancy_maps`
+       Key: Red = Free position. Blue = Free position where a target object or container can be placed.
 
        Convert from the coordinates in the array to an actual position using `get_occupancy_position()`.
 
     ```python
-    from sticky_mitten_avatar import StickyMittenAvatarController
-
-    c = StickyMittenAvatarController()
     c.init_scene(scene="2a", layout=1)
 
     print(c.occupancy_map[37][16]) # 0 (occupied)
@@ -198,12 +174,12 @@ class StickyMittenAvatarController(FloorplanController):
                  screen_width: int = 256, screen_height: int = 256, debug: bool = False, train = 0):
         """
         :param port: The port number.
-        :param launch_build: If True, automatically launch the build. If False, you will need to launch the build yourself (for example, from a Docker container).
+        :param launch_build: If True, automatically launch the build.
         :param demo: If True, this is a demo controller. All frames will be rendered.
         :param id_pass: If True, add the segmentation color pass to the [`FrameData`](frame_data.md). The simulation will run somewhat slower.
         :param screen_width: The width of the screen in pixels.
         :param screen_height: The height of the screen in pixels.
-        :param debug: If True, debug mode will be enabled. The console will output print statements, the simulator will draw targets for the avatar's mittens, and the controller will generate image plots of arm movements.
+        :param debug: If True, debug mode will be enabled.
         """
 
         self._debug = debug
@@ -221,7 +197,7 @@ class StickyMittenAvatarController(FloorplanController):
             self.dataset = pickle.load(f)
         self.dataset_n = len(self.dataset)
         self.dataset_id = 0
-        
+
         self._container_shapes = loads(Path(resource_filename(__name__, "object_data/container_shapes.json")).
                                        read_text(encoding="utf-8"))
         # Cache the entities.
@@ -233,6 +209,7 @@ class StickyMittenAvatarController(FloorplanController):
         self.goal_positions: Optional[dict] = None
         # The IDs of each target object.
         self._target_object_ids: List[int] = list()
+        self.container_masses: Dict[int, float] = dict() 
 
         # Commands sent by avatars.
         self._avatar_commands: List[dict] = []
@@ -272,14 +249,15 @@ class StickyMittenAvatarController(FloorplanController):
         resp = self.communicate(commands)
 
         # Make sure that the build is the correct version.
-        if not launch_build:
+        '''if not launch_build:
             version = get_data(resp=resp, d_type=Version)
             build_version = version.get_tdw_version()
             python_version = PyPi.get_installed_tdw_version(truncate=True)
             if build_version != python_version:
                 print(f"Your installed version of tdw ({python_version}) doesn't match the version of the build "
                       f"{build_version}. This might cause errors!")
-
+        '''
+        
     def init_scene(self, scene: str = None, layout: int = None, room: int = -1, data_id=0) -> None:
         """
         Initialize a scene, populate it with objects, and add the avatar.
@@ -314,8 +292,6 @@ class StickyMittenAvatarController(FloorplanController):
         | 4a, 4b, 4c | 0, 1, 2 | 0, 1, 2, 3, 4, 5, 6, 7 |
         | 5a, 5b, 5c | 0, 1, 2 | 0, 1, 2, 3 |
 
-        Images of each scene+layout combination can be found [here](https://github.com/alters-mit/sticky_mitten_avatar/tree/master/Documentation/images/floorplans).
-
         You can safely call `init_scene()` more than once to reset the simulation.
 
         :param scene: The name of an interior floorplan scene. If None, the controller will load a simple empty room. Each number (1, 2, etc.) has a different shape, different rooms, etc. Each letter (a, b, c) is a cosmetically distinct variant with the same floorplan.
@@ -346,7 +322,6 @@ class StickyMittenAvatarController(FloorplanController):
         layout = self.data['scene']['layout']
         room = self.data['scene']['room']
         print('scene:', scene, layout, room, data_id) 
-        
         # Initialize the scene.
         resp = self.communicate(self._get_scene_init_commands(scene=scene, layout=layout, room=room))
         self._avatar = Baby(debug=self._debug, resp=resp)
@@ -409,30 +384,28 @@ class StickyMittenAvatarController(FloorplanController):
 
         self._end_task()
 
-    def _end_task(self, sub_action: bool = False) -> None:
+    def _end_task(self, enable_sensor: bool = True) -> None:
         """
         End the task and update the frame data.
 
-        :param sub_action: If True, this is a sub-action. Don't enable the image sensor.
+        :param enable_sensor: If True, enable the image sensor.
         """
 
         commands = [self._avatar.get_default_sticky_mitten_profile()]
 
-        if not sub_action:
-            commands.extend([{"$type": "enable_image_sensor",
-                              "enable": True,
-                              "sensor_name": "SensorContainer",
-                              "avatar_id": self._avatar.id},
-                             {"$type": "send_images",
-                              "frequency": "once",
-                              "avatar_id": self._avatar.id},
-                             {"$type": "send_camera_matrices",
-                              "frequency": "once",
-                              "avatar_id": self._avatar.id}])
+        if enable_sensor:
+            commands.append({"$type": "enable_image_sensor",
+                             "enable": True,
+                             "sensor_name": "SensorContainer",
+                             "avatar_id": self._avatar.id})
         # Request output data to update the frame data.
-        commands.extend([{"$type": "send_rigidbodies",
+        commands.extend([{"$type": "send_images",
+                          "frequency": "once"},
+                         {"$type": "send_rigidbodies",
                           "frequency": "once"},
                          {"$type": "send_transforms",
+                          "frequency": "once"},
+                         {"$type": "send_camera_matrices",
                           "frequency": "once"}])
 
         resp = self.communicate(commands)
@@ -502,8 +475,8 @@ class StickyMittenAvatarController(FloorplanController):
         return object_id, commands
 
     def reach_for_target(self, arm: Arm, target: Dict[str, float], check_if_possible: bool = True,
-                         stop_on_mitten_collision: bool = True, precision: float = 0.05, absolute: bool = False,
-                         sub_action: bool = False) -> TaskStatus:
+                         stop_on_mitten_collision: bool = True, precision: float = 0.05, absolute: bool = False) -> \
+            TaskStatus:
         """
         Bend an arm joints of an avatar to reach for a target position.
         By default, the target is relative to the avatar's position and rotation.
@@ -521,9 +494,8 @@ class StickyMittenAvatarController(FloorplanController):
         :param target: The target position for the mitten.
         :param stop_on_mitten_collision: If true, the arm will stop bending if the mitten collides with an object other than the target object.
         :param check_if_possible: If True, before bending the arm, check if the mitten can reach the target assuming no obstructions; if not, don't try to bend the arm.
-        :param precision: The precision of the action. If the mitten is this distance or less away from the target position, the action returns `success`. A greater value means a less precise motion, which means the action might end sooner.
+        :param precision: The precision of the action. If the mitten is this distance or less away from the target position, the action returns `success`.
         :param absolute: If True, `target` is in absolute world coordinates. If False, `target` is in coordinates relative to the avatar's position and rotation.
-        :param sub_action: If True, this is a sub action and is being called from another API call. Sub-actions won't render images. Frontend users should always set this to False (the default value).
 
         :return: A `TaskStatus` indicating whether the avatar can reach the target and if not, why.
         """
@@ -540,7 +512,7 @@ class StickyMittenAvatarController(FloorplanController):
         if check_if_possible:
             status = self._avatar.can_reach_target(target=target, arm=arm)
             if status != TaskStatus.success:
-                self._end_task(sub_action=sub_action)
+                self._end_task()
                 return status
 
         self._avatar_commands.extend(self._avatar.reach_for_target(arm=arm,
@@ -549,12 +521,11 @@ class StickyMittenAvatarController(FloorplanController):
                                                                    precision=precision))
         self._avatar.status = TaskStatus.ongoing
         self._do_joint_motion()
-        self._end_task(sub_action=sub_action)
+        self._end_task()
         return self._get_avatar_status()
 
     def grasp_object(self, object_id: int, arm: Arm, check_if_possible: bool = True,
-                     stop_on_mitten_collision: bool = True, precision: float = 0.05, sub_action: bool = False) -> \
-            TaskStatus:
+                     stop_on_mitten_collision: bool = True) -> TaskStatus:
         """
         The avatar's arm will reach for the object and continuously try to grasp the object.
         If it grasps the object, the simultation will attach the object to the avatar's mitten with an invisible joint. There may be some empty space between a mitten and a grasped object.
@@ -579,8 +550,6 @@ class StickyMittenAvatarController(FloorplanController):
         :param arm: The arm of the mitten that will try to grasp the object.
         :param stop_on_mitten_collision: If true, the arm will stop bending if the mitten collides with an object.
         :param check_if_possible: If True, before bending the arm, check if the mitten can reach the target assuming no obstructions; if not, don't try to bend the arm.
-        :param precision: The precision of the action. If the mitten is this distance or less away from the target position, the action returns `success`. A greater value means a less precise motion, which means the action might end sooner.
-        :param sub_action: If True, this is a sub-action and is being called from another API call. Sub-actions won't render images.Frontend users should always set this to False (the default value).
 
         :return: A `TaskStatus` indicating whether the avatar picked up the object and if not, why.
         """
@@ -600,63 +569,55 @@ class StickyMittenAvatarController(FloorplanController):
 
         if check_if_possible:
             if not raycast_ok:
-                self._end_task(sub_action=sub_action)
+                self._end_task()
                 return TaskStatus.bad_raycast
             reachable_target = self._avatar.get_rotated_target(target=target)
             status = self._avatar.can_reach_target(target=reachable_target, arm=arm)
             if status != TaskStatus.success:
-                self._end_task(sub_action=sub_action)
+                self._end_task()
                 return status
 
         # Get commands to pick up the target.
-        commands = self._avatar.grasp_object(object_id=object_id,
-                                             target=target,
-                                             arm=arm,
-                                             stop_on_mitten_collision=stop_on_mitten_collision,
-                                             precision=precision)
+        commands = self._avatar.grasp_object(object_id=object_id, target=target, arm=arm,
+                                             stop_on_mitten_collision=stop_on_mitten_collision)
 
         self._avatar_commands.extend(commands)
         self._avatar.status = TaskStatus.ongoing
         self._do_joint_motion()
         # The avatar failed to reach the target.
         if self._avatar.status != TaskStatus.success:
-            self._end_task(sub_action=sub_action)
+            self._end_task()
             return self._get_avatar_status()
 
         # Return whether the avatar picked up the object.
         self._avatar.status = TaskStatus.idle
         if self._avatar.is_holding(object_id=object_id)[0]:
-            self._end_task(sub_action=sub_action)
+            self._end_task()
             return TaskStatus.success
         else:
-            self._end_task(sub_action=sub_action)
+            self._end_task()
             return TaskStatus.failed_to_pick_up
 
-    def drop(self, arm: Arm, reset_arm: bool = True, precision: float = 0.1, sub_action: bool = False) -> TaskStatus:
+    def drop(self, arm: Arm, reset_arm: bool = True) -> TaskStatus:
         """
         Drop any held objects held by the arm. Reset the arm to its neutral position.
 
         Possible [return values](task_status.md):
 
-        - `success` (The avatar's arm dropped all objects held by the arm (this will be `success` even if there were no objects) asnd if the avatar's arm reset (if applicable).
-        - `no_longer_bending` (The arm stopped bending before it reset, possibly due to an obstacle in the way.)
+        - `success` (The avatar's arm dropped all objects held by the arm.)
 
         :param arm: The arm that will drop any held objects.
         :param reset_arm: If True, reset the arm's positions to "neutral".
-        :param precision: The precision of the action. If the angles of each joint are less than this value, the action returns `success`. A greater value means a less precise motion, which means the action might end sooner.
-        :param sub_action: If True, this is a sub-action and is being called from another API call. Sub-actions won't render images. Frontend users should always set this to False (the default value).
-
-        :return: A `TaskStatus` indicating whether the avatar dropped all objects held by the arm and reset the arm (if applicable).
         """
 
         self._start_task()
 
-        self._avatar_commands.extend(self._avatar.drop(reset=reset_arm, arm=arm, precision=precision))
+        self._avatar_commands.extend(self._avatar.drop(reset=reset_arm, arm=arm))
         self._do_joint_motion()
-        self._end_task(sub_action=sub_action)
-        return self._avatar.status
+        self._end_task()
+        return TaskStatus.success
 
-    def reset_arm(self, arm: Arm, precision: float = 0.1, sub_action: bool = False) -> TaskStatus:
+    def reset_arm(self, arm: Arm) -> TaskStatus:
         """
         Reset an avatar's arm to its neutral positions.
 
@@ -666,15 +627,13 @@ class StickyMittenAvatarController(FloorplanController):
         - `no_longer_bending` (The arm stopped bending before it reset, possibly due to an obstacle in the way.)
 
         :param arm: The arm that will be reset.
-        :param precision: The precision of the action. If the angles of each joint are less than this value, the action returns `success`. A greater value means a less precise motion, which means the action might end sooner.
-        :param sub_action: If True, this is a sub-action and is being called from another API call. Sub-actions won't render images. Frontend users should always set this to False (the default value).
         """
 
         self._start_task()
 
-        self._avatar_commands.extend(self._avatar.reset_arm(arm=arm, precision=precision))
+        self._avatar_commands.extend(self._avatar.reset_arm(arm=arm))
         self._do_joint_motion()
-        self._end_task(sub_action=sub_action)
+        self._end_task()
         return self._avatar.status
 
     def _do_joint_motion(self) -> None:
@@ -684,7 +643,7 @@ class StickyMittenAvatarController(FloorplanController):
 
         done = False
         step = 0
-        while not done and step < 150:
+        while not done and step < 60:
             done = True
             step += 1
             # The loop is done if the IK goals are done.
@@ -694,26 +653,26 @@ class StickyMittenAvatarController(FloorplanController):
             if not done:
                 self.communicate([])
 
-    def _stop_avatar(self, sub_action: bool = False) -> None:
+    def _stop_avatar(self, enable_sensor: bool) -> None:
         """
         Stop the avatar's movement and turning.
 
-        :param sub_action: If True, this is a sub-action.
+        :param enable_sensor: If True, enable the image sensor.
         """
 
-        self._avatar_commands.extend([{"$type": "set_avatar_drag",
-                                       "drag": self._STOP_DRAG,
-                                       "angular_drag": self._STOP_DRAG,
-                                       "avatar_id": self._avatar.id},
-                                      {"$type": "set_avatar_rigidbody_constraints",
-                                       "rotate": False,
-                                       "translate": False}])
-        self._end_task(sub_action=sub_action)
+        self.communicate([{"$type": "set_avatar_drag",
+                           "drag": self._STOP_DRAG,
+                           "angular_drag": self._STOP_DRAG,
+                           "avatar_id": self._avatar.id},
+                          {"$type": "set_avatar_rigidbody_constraints",
+                           "rotate": False,
+                           "translate": False}])
+        self._end_task(enable_sensor=enable_sensor)
         self._avatar.status = TaskStatus.idle
 
     def turn_to(self, target: Union[Dict[str, float], int], force: float = 1000,
                 stopping_threshold: float = 0.15, num_attempts: int = 200,
-                sub_action: bool = False, stop_on_collision: bool = True) -> TaskStatus:
+                enable_sensor_on_finish: bool = True) -> TaskStatus:
         """
         Turn the avatar to face a target position or object.
 
@@ -721,15 +680,12 @@ class StickyMittenAvatarController(FloorplanController):
 
         - `success` (The avatar turned to face the target.)
         - `too_long` (The avatar made more attempts to turn than `num_attempts`.)
-        - `collided_with_something_heavy` (if `stop_on_collision == True`)
-        - `collided_with_environment` (if `stop_on_collision == True`)
 
         :param target: Either the target position or the ID of the target object.
         :param force: The force at which the avatar will turn. More force = faster, but might overshoot the target.
         :param stopping_threshold: Stop when the avatar is within this many degrees of the target.
         :param num_attempts: The avatar will apply more angular force this many times to complete the turn before giving up.
-        :param stop_on_collision: If True, stop turning when the avatar collides with a large object (mass > 90) or the environment (e.g. a wall).
-        :param sub_action: If True, this is a sub-action and is being called from another API call. Sub-actions won't render images. Frontend users should always set this to False (the default value).
+        :param enable_sensor_on_finish: Enable the camera upon completing the task. This should only be set to False in the backend code.
 
         :return: A `TaskStatus` indicating whether the avatar turned successfully and if not, why.
         """
@@ -746,12 +702,6 @@ class StickyMittenAvatarController(FloorplanController):
             if np.abs(angle) < stopping_threshold or ((initial_angle < 0 and angle > 0) or
                                                       (initial_angle > 0 and angle < 0)):
                 return TaskStatus.success, angle
-
-            # Check if the avatar collided with anything.
-            if stop_on_collision:
-                stop_status = self._is_avatar_collision()
-                if stop_status != TaskStatus.success:
-                    return stop_status, angle
 
             return TaskStatus.ongoing, angle
         # Set the target to the object's position.
@@ -795,11 +745,11 @@ class StickyMittenAvatarController(FloorplanController):
                 state, previous_angle = _get_turn_state()
                 # The turn succeeded!
                 if state == TaskStatus.success:
-                    self._stop_avatar(sub_action=sub_action)
+                    self._stop_avatar(enable_sensor_on_finish)
                     return state
                 # The turn failed.
                 elif state != TaskStatus.ongoing:
-                    self._stop_avatar(sub_action=sub_action)
+                    self._stop_avatar(enable_sensor_on_finish)
                     return state
                 self.communicate([])
 
@@ -807,18 +757,18 @@ class StickyMittenAvatarController(FloorplanController):
             state, previous_angle = _get_turn_state()
             # The turn succeeded!
             if state == TaskStatus.success:
-                self._stop_avatar(sub_action=sub_action)
+                self._stop_avatar(enable_sensor_on_finish)
                 return state
             # The turn failed.
             elif state != TaskStatus.ongoing:
-                self._stop_avatar(sub_action=sub_action)
+                self._stop_avatar(enable_sensor_on_finish)
                 return state
             i += 1
-        self._stop_avatar(sub_action=sub_action)
+        self._stop_avatar(enable_sensor_on_finish)
         return TaskStatus.too_long
 
-    def turn_by(self, angle: float, force: float = 1000, stopping_threshold: float = 0.15, num_attempts: int = 200,
-                stop_on_collision: bool = True) -> TaskStatus:
+    def turn_by(self, angle: float, force: float = 1000, stopping_threshold: float = 0.15, num_attempts: int = 200) -> \
+            TaskStatus:
         """
         Turn the avatar by an angle.
 
@@ -826,13 +776,10 @@ class StickyMittenAvatarController(FloorplanController):
 
         - `success` (The avatar turned by the angle.)
         - `too_long` (The avatar made more attempts to turn than `num_attempts`.)
-        - `collided_with_something_heavy` (if `stop_on_collision == True`)
-        - `collided_with_environment` (if `stop_on_collision == True`)
 
         :param angle: The angle to turn to in degrees. If > 0, turn clockwise; if < 0, turn counterclockwise.
         :param force: The force at which the avatar will turn. More force = faster, but might overshoot the target.
         :param stopping_threshold: Stop when the avatar is within this many degrees of the target.
-        :param stop_on_collision: If True, stop turning when the avatar collides with a large object (mass > 90) or the environment (e.g. a wall).
         :param num_attempts: The avatar will apply more angular force this many times to complete the turn before giving up.
 
         :return: A `TaskStatus` indicating whether the avatar turned successfully and if not, why.
@@ -844,12 +791,11 @@ class StickyMittenAvatarController(FloorplanController):
         # Get a point to look at.
         p1 = np.array(self._avatar.frame.get_position()) + (p1 * 1000)
         return self.turn_to(target=TDWUtils.array_to_vector3(p1), force=force, stopping_threshold=stopping_threshold,
-                            num_attempts=num_attempts, stop_on_collision=stop_on_collision)
+                            num_attempts=num_attempts)
 
     def go_to(self, target: Union[Dict[str, float], int], turn_force: float = 1000, move_force: float = 80,
               turn_stopping_threshold: float = 0.15, move_stopping_threshold: float = 0.35,
-              stop_on_collision: bool = True, turn: bool = True, num_attempts: int = 200,
-              direction: int = 1) -> TaskStatus:
+              stop_on_collision: bool = True, turn: bool = True, num_attempts: int = 200) -> TaskStatus:
         """
         Move the avatar to a target position or object.
 
@@ -866,10 +812,9 @@ class StickyMittenAvatarController(FloorplanController):
         :param turn_stopping_threshold: Stop when the avatar is within this many degrees of the target.
         :param move_force: The force at which the avatar will move. More force = faster, but might overshoot the target.
         :param move_stopping_threshold: Stop within this distance of the target.
-        :param stop_on_collision: If True, stop moving when the avatar collides with a large object (mass > 90) or the environment (e.g. a wall).
+        :param stop_on_collision: If True, stop moving when the object collides with a large object (mass > 90) or the environment (e.g. a wall).
         :param turn: If True, try turning to face the target before moving.
         :param num_attempts: The avatar will apply more force this many times to complete the turn before giving up.
-        :param direction: The direction of the force. This should always be 1 (it is sometimes set to -1 in the backend code).
 
         :return:  A `TaskStatus` indicating whether the avatar arrived at the target and if not, why.
         """
@@ -881,9 +826,14 @@ class StickyMittenAvatarController(FloorplanController):
 
             # Check if the root object of the avatar collided with anything large. If so, stop movement.
             if stop_on_collision:
-                stop_status = self._is_avatar_collision()
-                if stop_status != TaskStatus.success:
-                    return stop_status
+                if self._avatar.base_id in self._avatar.collisions:
+                    for o_id in self._avatar.collisions[self._avatar.base_id]:
+                        collidee_mass = self.static_object_info[o_id].mass
+                        if collidee_mass >= 90:
+                            return TaskStatus.collided_with_something_heavy
+                # If the avatar's body collided with the environment (e.g. a wall), stop movement.
+                if self._avatar.base_id in self._avatar.env_collisions:
+                    return TaskStatus.collided_with_environment
 
             p = np.array(self._avatar.frame.get_position())
             d_from_initial = np.linalg.norm(initial_position - p)
@@ -915,9 +865,9 @@ class StickyMittenAvatarController(FloorplanController):
             # Turn to the target.
             status = self.turn_to(target=TDWUtils.array_to_vector3(target), force=turn_force,
                                   stopping_threshold=turn_stopping_threshold, num_attempts=num_attempts,
-                                  sub_action=True, stop_on_collision=stop_on_collision)
+                                  enable_sensor_on_finish=False)
             if status != TaskStatus.success:
-                self._stop_avatar()
+                self._stop_avatar(True)
                 return status
         self._start_task()
         self._avatar.status = TaskStatus.ongoing
@@ -928,7 +878,7 @@ class StickyMittenAvatarController(FloorplanController):
                                "rotate": False,
                                "translate": True},
                               {"$type": "move_avatar_forward_by",
-                               "magnitude": move_force * direction,
+                               "magnitude": move_force,
                                "avatar_id": self._avatar.id},
                               {"$type": "set_avatar_drag",
                                "drag": 0.1,
@@ -937,23 +887,23 @@ class StickyMittenAvatarController(FloorplanController):
                               self._avatar.get_movement_sticky_mitten_profile()])
             t = _get_state()
             if t == TaskStatus.success:
-                self._stop_avatar()
+                self._stop_avatar(True)
                 return t
             elif t != TaskStatus.ongoing:
-                self._stop_avatar()
+                self._stop_avatar(True)
                 return t
             # Glide.
             while np.linalg.norm(self._avatar.frame.get_velocity()) > 0.1:
                 self.communicate([])
                 t = _get_state()
                 if t == TaskStatus.success:
-                    self._stop_avatar()
+                    self._stop_avatar(True)
                     return t
                 elif t != TaskStatus.ongoing:
-                    self._stop_avatar()
+                    self._stop_avatar(True)
                     return t
             i += 1
-        self._stop_avatar()
+        self._stop_avatar(True)
         return TaskStatus.too_long
 
     def move_forward_by(self, distance: float, move_force: float = 80, move_stopping_threshold: float = 0.35,
@@ -972,7 +922,7 @@ class StickyMittenAvatarController(FloorplanController):
         :param distance: The distance that the avatar will travel. If < 0, the avatar will move backwards.
         :param move_force: The force at which the avatar will move. More force = faster, but might overshoot the target.
         :param move_stopping_threshold: Stop within this distance of the target.
-        :param stop_on_collision: If True, stop moving when the avatar collides with a large object (mass > 90) or the environment (e.g. a wall).
+        :param stop_on_collision: If True, stop moving when the object collides with a large object (mass > 90) or the environment (e.g. a wall).
         :param num_attempts: The avatar will apply more force this many times to complete the turn before giving up.
 
         :return: A `TaskStatus` indicating whether the avatar moved forward by the distance and if not, why.
@@ -981,9 +931,8 @@ class StickyMittenAvatarController(FloorplanController):
         # The target is at `distance` away from the avatar's position along the avatar's forward directional vector.
         target = np.array(self._avatar.frame.get_position()) + (np.array(self._avatar.frame.get_forward()) * distance)
         return self.go_to(target=target, move_force=move_force, move_stopping_threshold=move_stopping_threshold,
-                          stop_on_collision=stop_on_collision, turn=False, num_attempts=num_attempts,
-                          direction=1 if distance > 0 else -1)
-
+                          stop_on_collision=stop_on_collision, turn=False, num_attempts=num_attempts)
+    
     def put_in_container_for_model_training(self) -> TaskStatus: 
         self._start_task() 
         container_id: Optional[int] = None 
@@ -1034,15 +983,12 @@ class StickyMittenAvatarController(FloorplanController):
         :return: A `TaskStatus` indicating whether the avatar put the object in the container and if not, why.
         """
 
-        self._start_task()
-
         if not self.static_object_info[container_id].container:
-            self._end_task()
             return TaskStatus.not_a_container
 
         container_id = int(container_id)
 
-        self._stop_avatar(sub_action=True)
+        self._stop_avatar(enable_sensor=False)
 
         # A "full" container has too many objects such that physics might glitch.
         overlap_ids = self._get_objects_in_container(container_id=container_id)
@@ -1054,7 +1000,7 @@ class StickyMittenAvatarController(FloorplanController):
         if object_id not in self.frame.held_objects[arm]:
             status = self.grasp_object(object_id=object_id, arm=arm)
             if status != TaskStatus.success:
-                self._end_task()
+                self._end_task(enable_sensor=False)
                 return status
         container_arm = Arm.left if arm == Arm.right else Arm.right
 
@@ -1063,8 +1009,7 @@ class StickyMittenAvatarController(FloorplanController):
                               arm=arm,
                               check_if_possible=False,
                               stop_on_mitten_collision=False,
-                              precision=0.2,
-                              sub_action=True)
+                              precision=0.2)
 
         # Let the container fall to the ground.
         self.drop(arm=container_arm)
@@ -1093,45 +1038,44 @@ class StickyMittenAvatarController(FloorplanController):
                            "translate": False}])
 
         self._wait_for_objects_to_stop(object_ids=[container_id])
-        self._end_task(sub_action=True)
+        self._end_task()
 
         # Lift the arm away.
         self.reach_for_target(target={"x": 0.25 if arm == Arm.right else -0.25, "y": 0.6, "z": 0.3},
                               arm=arm,
                               check_if_possible=False,
-                              stop_on_mitten_collision=False,
-                              sub_action=True)
+                              stop_on_mitten_collision=False)
         aim_position = self.frame.object_transforms[container_id].position
         aim_position[1] = 0.3
         self.reach_for_target(arm=arm,
                               target={"x": 0, "y": 0.306, "z": 0.392},
                               stop_on_mitten_collision=False,
-                              check_if_possible=False,
-                              sub_action=True)
+                              check_if_possible=False)
+
+        self._end_task(enable_sensor=False)
 
         # Drop the object.
-        self.drop(arm=arm, reset_arm=False, sub_action=True)
+        self.drop(arm=arm, reset_arm=False)
 
         # Lift the arm away.
         self.reach_for_target(target={"x": 0.25 if arm == Arm.right else -0.25, "y": 0.6, "z": 0.3},
                               arm=arm,
                               check_if_possible=False,
-                              stop_on_mitten_collision=False,
-                              sub_action=True)
+                              stop_on_mitten_collision=False)
 
-        self.reset_arm(arm=arm, sub_action=True)
+        self.reset_arm(arm=arm)
         self._wait_for_objects_to_stop(object_ids=[object_id])
 
         if object_id not in self._get_objects_in_container(container_id=container_id):
-            self._end_task()
+            print(self._get_objects_in_container(container_id=container_id))
             return TaskStatus.not_in_container
 
         # Connect the object to the container.
-        self._avatar_commands.append({"$type": "add_fixed_joint",
-                                      "id": object_id,
-                                      "parent_id": container_id})
+        self.communicate({"$type": "add_fixed_joint",
+                          "id": object_id,
+                          "parent_id": container_id})
 
-        self.reset_arm(arm=container_arm, sub_action=True)
+        self.reset_arm(arm=container_arm)
 
         # Move the container and its objects in front of the mitten.
         mitten_id = self._avatar.mitten_ids[container_arm]
@@ -1151,6 +1095,7 @@ class StickyMittenAvatarController(FloorplanController):
                                       "id": overlap_id,
                                       "position": TDWUtils.array_to_vector3(teleport_position),
                                       "physics": True})
+
         self.communicate(teleport_commands)
 
         self._wait_for_objects_to_stop(object_ids=[object_id])
@@ -1167,14 +1112,14 @@ class StickyMittenAvatarController(FloorplanController):
         """
 
         self._start_task()
-        self._avatar_commands.extend([{"$type": "rotate_sensor_container_by",
-                                       "axis": "pitch",
-                                       "angle": pitch,
-                                       "avatar_id": self._avatar.id},
-                                      {"$type": "rotate_sensor_container_by",
-                                       "axis": "yaw",
-                                       "angle": yaw,
-                                       "avatar_id": self._avatar.id}])
+
+        commands = []
+        for angle, axis in zip([pitch, yaw], ["pitch", "yaw"]):
+            commands.append({"$type": "rotate_sensor_container_by",
+                             "axis": axis,
+                             "angle": angle,
+                             "avatar_id": self._avatar.id})
+        self._avatar_commands.extend(commands)
         self._end_task()
 
     def reset_camera_rotation(self) -> None:
@@ -1196,7 +1141,7 @@ class StickyMittenAvatarController(FloorplanController):
         :param cam_id: The ID of the camera.
         :param target_object: Always point the camera at this object or avatar.
         :param position: The position of the camera.
-        :param images: Image rendering behavior. Choices: `"cam"` (only this camera renders images); `"all"` (the avatar and this camera render images); `"avatar"` (only the avatar renders images).
+        :param images: Image capture behavior. Choices: `"cam"` (only this camera captures images); `"all"` (avatars currently in the scene and this camera capture images); `"avatars"` (only the avatars currently in the scene capture images)
         """
 
         self._start_task()
@@ -1222,24 +1167,28 @@ class StickyMittenAvatarController(FloorplanController):
                                        "use_centroid": True}]
         else:
             self._cam_commands = list()
+        
+        self._cam_commands.append({"$type": "enable_image_sensor",
+                                   "enable": False,
+                                   "sensor_name": "SensorContainer",
+                                   "avatar_id": self._avatar.id})
+        if images != "avatars":
+            commands.append({"$type": "set_pass_masks",
+                             "pass_masks": ["_img"],
+                             "avatar_id": cam_id})
         if images == "cam":
             # Disable avatar cameras.
-            commands.extend([{"$type": "set_pass_masks",
-                              "pass_masks": ["_img"],
-                              "avatar_id": cam_id},
-                             {"$type": "enable_image_sensor",
-                              "enable": False,
-                              "sensor_name": "SensorContainer",
-                              "avatar_id": self._avatar.id},
-                             {"$type": "send_images",
-                              "ids": [cam_id],
-                              "frequency": "always"}])
+            commands.append({"$type": "enable_image_sensor",
+                             "enable": False,
+                             "sensor_name": "SensorContainer",
+                             "avatar_id": self._avatar.id})
+
+            commands.append({"$type": "send_images",
+                             "ids": [cam_id],
+                             "frequency": "always"})
         elif images == "all":
-            commands.extend([{"$type": "set_pass_masks",
-                              "pass_masks": ["_img"],
-                              "avatar_id": cam_id},
-                             {"$type": "send_images",
-                              "frequency": "always"}])
+            commands.append({"$type": "send_images",
+                             "frequency": "always"})
         self._avatar_commands.extend(commands)
         self._end_task()
 
@@ -1358,6 +1307,34 @@ class StickyMittenAvatarController(FloorplanController):
         point = np.array(raycast.get_point())
         return raycast.get_hit() and raycast.get_object_id() is not None and raycast.get_object_id() == object_id, point
 
+    def _roll_wrist(self, arm: Arm, angle: float, precision: float = 0.02) -> None:
+        """
+        Roll the wrist to a target angle.
+
+        :param arm: The arm.
+        :param angle: The target angle.
+        :param precision: Precision of the movement (the threshold at which the angle is considered equal).
+        """
+
+        # Begin rotation.
+        self.communicate([self._avatar.get_roll_wrist_sticky_mitten_profile(arm=arm),
+                          {"$type": "bend_arm_joint_to",
+                           "angle": angle,
+                           "joint": f"wrist_{arm.name}",
+                           "axis": "roll",
+                           "avatar_id": self._avatar.id}])
+        # Wait for the motion to finish.
+        a0 = self._avatar.frame.get_angles_left()[-2] if arm == Arm.left else \
+            self._avatar.frame.get_angles_right()[-2]
+        done_twisting_wrist = False
+        while not done_twisting_wrist:
+            self.communicate([])
+            # Get the angle of the wrist.
+            a1 = self._avatar.frame.get_angles_left()[-2] if arm == Arm.left else \
+                self._avatar.frame.get_angles_right()[-2]
+            done_twisting_wrist = np.abs(a1 - a0) < precision
+            a0 = a1
+
     def _get_scene_init_commands(self, scene: str = None, layout: int = None, room: int = -1) -> List[dict]:
         """
         Get commands to initialize the scene before adding avatars.
@@ -1403,7 +1380,7 @@ class StickyMittenAvatarController(FloorplanController):
                 commands.append({"$type": "set_mass",
                                  "id": container_id,
                                  "mass": CONTAINER_MASS})
-                #self.container_masses[container_id] = CONTAINER_MASS
+                self.container_masses[container_id] = CONTAINER_MASS
                 # Mark this space as occupied.
                 self.occupancy_map[ix][iy] = 0
             
@@ -1570,19 +1547,4 @@ class StickyMittenAvatarController(FloorplanController):
             resp = self.communicate([])
             num_frames += 1
 
-        self._end_task(sub_action=True)
-
-    def _is_avatar_collision(self) -> TaskStatus:
-        """
-        :return: A TaskStatus: `success` if the avatar didn't collide with the environment or a large object.
-        """
-
-        if self._avatar.base_id in self._avatar.collisions:
-            for o_id in self._avatar.collisions[self._avatar.base_id]:
-                collidee_mass = self.static_object_info[o_id].mass
-                if collidee_mass >= 90:
-                    return TaskStatus.collided_with_something_heavy
-        # If the avatar's body collided with the environment (e.g. a wall), stop movement.
-        if self._avatar.base_id in self._avatar.env_collisions:
-            return TaskStatus.collided_with_environment
-        return TaskStatus.success
+        self._end_task(enable_sensor=False)
